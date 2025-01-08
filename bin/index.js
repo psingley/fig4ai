@@ -13,10 +13,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 dotenv.config({ path: join(dirname(__dirname), '.env') });
 
-const figmaUrl = process.argv[2];
+const args = process.argv.slice(2);
+const figmaUrl = args[0];
+const generateTailwind = args.includes('--tailwind');
 
 if (!figmaUrl) {
     console.error(chalk.red('Please provide a Figma URL'));
+    console.log(chalk.blue('\nUsage:'));
+    console.log('  npx figtell <figma-url> [--tailwind]');
+    console.log('\nOptions:');
+    console.log('  --tailwind    Generate Tailwind theme configuration');
     process.exit(1);
 }
 
@@ -557,6 +563,7 @@ function printComponentInstances(instances) {
 }
 
 async function generatePseudoComponent(component, instance, tokens) {
+    // Create a more detailed design system summary with exact values
     const designSystem = {
         typography: {
             headings: Object.fromEntries(
@@ -567,10 +574,36 @@ async function generatePseudoComponent(component, instance, tokens) {
             body: tokens.typography.body[0]?.style || null
         },
         colors: {
-            primary: tokens.colors.primary.map(c => ({ name: c.name, hex: c.hex })),
-            secondary: tokens.colors.secondary.map(c => ({ name: c.name, hex: c.hex })),
-            text: tokens.colors.text.map(c => ({ name: c.name, hex: c.hex })),
-            background: tokens.colors.background.map(c => ({ name: c.name, hex: c.hex }))
+            primary: tokens.colors.primary.map(c => ({ 
+                name: c.name, 
+                hex: c.hex,
+                rgb: `${c.color.r},${c.color.g},${c.color.b}`,
+                opacity: c.opacity
+            })),
+            secondary: tokens.colors.secondary.map(c => ({ 
+                name: c.name, 
+                hex: c.hex,
+                rgb: `${c.color.r},${c.color.g},${c.color.b}`,
+                opacity: c.opacity
+            })),
+            text: tokens.colors.text.map(c => ({ 
+                name: c.name, 
+                hex: c.hex,
+                rgb: `${c.color.r},${c.color.g},${c.color.b}`,
+                opacity: c.opacity
+            })),
+            background: tokens.colors.background.map(c => ({ 
+                name: c.name, 
+                hex: c.hex,
+                rgb: `${c.color.r},${c.color.g},${c.color.b}`,
+                opacity: c.opacity
+            })),
+            other: tokens.colors.other.map(c => ({ 
+                name: c.name, 
+                hex: c.hex,
+                rgb: `${c.color.r},${c.color.g},${c.color.b}`,
+                opacity: c.opacity
+            }))
         },
         spacing: tokens.spacing.map(s => ({
             name: s.name,
@@ -578,9 +611,94 @@ async function generatePseudoComponent(component, instance, tokens) {
             padding: s.padding
         })),
         effects: {
-            shadows: tokens.effects.shadows.map(s => ({ name: s.name, value: s.value })),
-            blurs: tokens.effects.blurs.map(b => ({ name: b.name, value: b.value }))
+            shadows: tokens.effects.shadows.map(s => ({
+                name: s.name,
+                type: s.type,
+                ...s.value,
+                color: s.value.color ? {
+                    hex: rgbToHex(
+                        Math.round(s.value.color.r * 255),
+                        Math.round(s.value.color.g * 255),
+                        Math.round(s.value.color.b * 255)
+                    ),
+                    rgb: `${Math.round(s.value.color.r * 255)},${Math.round(s.value.color.g * 255)},${Math.round(s.value.color.b * 255)}`,
+                    opacity: s.value.color.a
+                } : null
+            })),
+            blurs: tokens.effects.blurs.map(b => ({
+                name: b.name,
+                type: b.type,
+                ...b.value
+            }))
         }
+    };
+
+    // Extract component-specific styles and references
+    const componentStyles = {
+        styles: instance.styles || {},  // Style references from Figma
+        fills: instance.fills?.map(fill => {
+            if (fill.type === 'SOLID') {
+                // Check if this fill comes from a style
+                const styleId = instance.styles?.fills;
+                if (styleId) {
+                    // Find the style in tokens
+                    const style = tokens.styles.find(s => s.id === styleId);
+                    return {
+                        type: fill.type,
+                        styleId,
+                        styleName: style?.name || 'Unknown Style',
+                        color: {
+                            hex: rgbToHex(
+                                Math.round(fill.color.r * 255),
+                                Math.round(fill.color.g * 255),
+                                Math.round(fill.color.b * 255)
+                            ),
+                            rgb: `${Math.round(fill.color.r * 255)},${Math.round(fill.color.g * 255)},${Math.round(fill.color.b * 255)}`,
+                            opacity: fill.color.a
+                        }
+                    };
+                }
+                return {
+                    type: fill.type,
+                    color: {
+                        hex: rgbToHex(
+                            Math.round(fill.color.r * 255),
+                            Math.round(fill.color.g * 255),
+                            Math.round(fill.color.b * 255)
+                        ),
+                        rgb: `${Math.round(fill.color.r * 255)},${Math.round(fill.color.g * 255)},${Math.round(fill.color.b * 255)}`,
+                        opacity: fill.color.a
+                    }
+                };
+            }
+            return fill;
+        }),
+        effects: instance.effects?.map(effect => {
+            const styleId = instance.styles?.effects;
+            if (styleId) {
+                const style = tokens.styles.find(s => s.id === styleId);
+                return {
+                    type: effect.type,
+                    styleId,
+                    styleName: style?.name || 'Unknown Style',
+                    ...effect
+                };
+            }
+            return effect;
+        }),
+        strokes: instance.strokes?.map(stroke => {
+            const styleId = instance.styles?.strokes;
+            if (styleId) {
+                const style = tokens.styles.find(s => s.id === styleId);
+                return {
+                    type: stroke.type,
+                    styleId,
+                    styleName: style?.name || 'Unknown Style',
+                    ...stroke
+                };
+            }
+            return stroke;
+        })
     };
 
     const functions = [
@@ -596,7 +714,7 @@ async function generatePseudoComponent(component, instance, tokens) {
                     },
                     pseudoCode: {
                         type: "string",
-                        description: "The pseudo-XML code for the component"
+                        description: "The pseudo-XML code for the component with detailed styling"
                     }
                 },
                 required: ["componentName", "pseudoCode"]
@@ -612,23 +730,34 @@ Name: ${component.name}
 Type: ${component.type}
 Description: ${component.description || 'No description provided'}
 Size: ${instance.size.width}x${instance.size.height}
-Styles: ${JSON.stringify(instance.styles || {})}
+
+Component Specific Styles and References:
+${JSON.stringify(componentStyles, null, 2)}
 
 Requirements:
 1. Generate pseudo-XML code that represents this component
-2. Use semantic element names
-3. Include basic styling attributes
-4. Make it accessible
-5. Keep it simple and readable
-6. Use design system tokens where applicable
+2. Use style references (styleId) when available instead of direct values
+3. Include ALL styling details (colors, shadows, effects)
+4. Use exact color values (HEX and RGB) when no style reference exists
+5. Include shadow and effect details with style references
+6. Specify padding and spacing
+7. Include background colors and gradients
+8. Make it accessible
+9. Keep it readable
 
 Example format:
-<Button primary>
-  <Icon name="star" />
-  <Text>Click me</Text>
+<Button 
+  fills="style_id_123"
+  effects="style_id_456"
+  strokes="style_id_789"
+  padding="8px 16px"
+  border-radius="4px"
+>
+  <Icon name="star" fills="style_id_234" />
+  <Text fills="style_id_567" font-size="16px">Click me</Text>
 </Button>
 
-Generate ONLY the pseudo-XML code without any additional explanation.`;
+Generate ONLY the pseudo-XML code with detailed styling attributes, preferring style references over direct values.`;
 
     try {
         const completion = await openai.chat.completions.create({
@@ -701,7 +830,7 @@ Generate ONLY the pseudo-XML code without any additional explanation.`;
 
     try {
         const completion = await openai.chat.completions.create({
-            model: "gpt-4",
+            model: "gpt-4o",
             messages: [{ role: "user", content: prompt }],
             functions,
             function_call: { name: "create_pseudo_frame" }
@@ -750,9 +879,209 @@ async function generateAllPseudoCode(components, instances, frames, tokens) {
     return { components: pseudoComponents, frames: pseudoFrames };
 }
 
+// Add new function for Tailwind theme generation
+function generateTailwindTheme(tokens) {
+    const theme = {
+        colors: {},
+        fontSize: {},
+        fontWeight: {},
+        lineHeight: {},
+        letterSpacing: {},
+        spacing: {},
+        boxShadow: {},
+        borderRadius: {},
+    };
+
+    // Process colors
+    Object.entries(tokens.colors).forEach(([category, colors]) => {
+        colors.forEach(color => {
+            const colorName = color.name.split('/').pop().toLowerCase().replace(/\s+/g, '-');
+            if (color.opacity !== 1) {
+                theme.colors[`${category}-${colorName}`] = `rgba(${color.color.r}, ${color.color.g}, ${color.color.b}, ${color.opacity})`;
+            } else {
+                theme.colors[`${category}-${colorName}`] = color.hex;
+            }
+        });
+    });
+
+    // Process typography
+    Object.entries(tokens.typography.headings).forEach(([level, styles]) => {
+        styles.forEach(style => {
+            // Font sizes
+            theme.fontSize[level] = [
+                `${style.style.fontSize}px`,
+                {
+                    lineHeight: style.style.lineHeight ? `${style.style.lineHeight}px` : 'normal',
+                    letterSpacing: style.style.letterSpacing ? `${style.style.letterSpacing}px` : 'normal',
+                    fontWeight: style.style.fontWeight || 'normal',
+                }
+            ];
+
+            // Font weights
+            if (style.style.fontWeight) {
+                theme.fontWeight[level] = style.style.fontWeight;
+            }
+        });
+    });
+
+    tokens.typography.body.forEach((style, index) => {
+        const name = `body-${index + 1}`;
+        theme.fontSize[name] = [
+            `${style.style.fontSize}px`,
+            {
+                lineHeight: style.style.lineHeight ? `${style.style.lineHeight}px` : 'normal',
+                letterSpacing: style.style.letterSpacing ? `${style.style.letterSpacing}px` : 'normal',
+                fontWeight: style.style.fontWeight || 'normal',
+            }
+        ];
+    });
+
+    // Process spacing
+    tokens.spacing.forEach(space => {
+        const spaceName = space.name.split('/').pop().toLowerCase().replace(/\s+/g, '-');
+        theme.spacing[spaceName] = `${space.itemSpacing}px`;
+        
+        // Add padding values if they exist
+        if (Object.values(space.padding).some(v => v !== 0)) {
+            ['top', 'right', 'bottom', 'left'].forEach(side => {
+                if (space.padding[side] !== 0) {
+                    theme.spacing[`${spaceName}-${side}`] = `${space.padding[side]}px`;
+                }
+            });
+        }
+    });
+
+    // Process effects (shadows)
+    tokens.effects.shadows.forEach(shadow => {
+        const shadowName = shadow.name.split('/').pop().toLowerCase().replace(/\s+/g, '-');
+        if (shadow.value.color) {
+            const { r, g, b, a } = shadow.value.color;
+            const { offset, spread, blur } = shadow.value;
+            theme.boxShadow[shadowName] = 
+                `${offset.x}px ${offset.y}px ${blur}px ${spread}px rgba(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)}, ${a})`;
+        }
+    });
+
+    return `module.exports = {
+  theme: {
+    extend: ${JSON.stringify(theme, null, 2)}
+  }
+}`;
+}
+
+async function enhanceTailwindTheme(initialTheme, pseudoComponents, pseudoFrames) {
+    const functions = [
+        {
+            name: "enhance_tailwind_theme",
+            description: "Enhance and polish Tailwind theme configuration based on components analysis",
+            parameters: {
+                type: "object",
+                properties: {
+                    theme: {
+                        type: "object",
+                        description: "Enhanced Tailwind theme configuration",
+                        properties: {
+                            colors: {
+                                type: "object",
+                                description: "Color palette including semantic colors",
+                                additionalProperties: true
+                            },
+                            fontSize: {
+                                type: "object",
+                                description: "Typography scale with semantic naming",
+                                additionalProperties: true
+                            },
+                            spacing: {
+                                type: "object",
+                                description: "Spacing scale with semantic naming",
+                                additionalProperties: true
+                            },
+                            borderRadius: {
+                                type: "object",
+                                description: "Border radius scale",
+                                additionalProperties: true
+                            },
+                            boxShadow: {
+                                type: "object",
+                                description: "Shadow definitions",
+                                additionalProperties: true
+                            },
+                            extend: {
+                                type: "object",
+                                description: "Additional theme extensions",
+                                additionalProperties: true
+                            }
+                        },
+                        required: ["colors", "fontSize", "spacing"]
+                    }
+                },
+                required: ["theme"]
+            }
+        }
+    ];
+
+    const prompt = `Analyze these pseudo-components and the initial Tailwind theme to create an enhanced, production-ready Tailwind configuration.
+
+Initial Tailwind Theme:
+${JSON.stringify(initialTheme, null, 2)}
+
+Pseudo Components:
+${Array.from(pseudoComponents.values()).map(c => `${c.componentName}:\n${c.pseudoCode}`).join('\n\n')}
+
+Frame Layouts:
+${Array.from(pseudoFrames.values()).map(f => `${f.frameName}:\n${f.pseudoCode}`).join('\n\n')}
+
+Requirements:
+1. Analyze component usage patterns to identify semantic color names
+2. Create consistent spacing scale based on component layouts
+3. Refine typography scale for better hierarchy
+4. Add semantic shadow definitions
+5. Include component-specific utilities
+6. Add any missing tokens found in components
+7. Ensure consistent naming conventions
+8. Add semantic aliases for colors (e.g., primary, secondary, accent)
+9. Include interactive state variations (hover, focus, etc.)
+10. Add responsive breakpoint considerations
+11. Include any component-specific variants needed
+12. Ensure accessibility compliance (contrast ratios, etc.)
+
+Generate an enhanced Tailwind theme configuration that accurately reflects the design system.`;
+
+    try {
+        const completion = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages: [{ role: "user", content: prompt }],
+            functions,
+            function_call: { name: "enhance_tailwind_theme" }
+        });
+
+        const response = JSON.parse(completion.choices[0].message.function_call.arguments);
+        
+        // Format the enhanced theme as a proper Tailwind config
+        return `/** @type {import('tailwindcss').Config} */
+module.exports = {
+  theme: ${JSON.stringify(response.theme, null, 2)},
+  plugins: [],
+}`;
+    } catch (error) {
+        console.error(chalk.red(`Error enhancing Tailwind theme: ${error.message}`));
+        return null;
+    }
+}
+
 async function main() {
     try {
         const result = parseFigmaUrl(figmaUrl);
+        let output = '';
+
+        // Capture URL details
+        output += '# Figma Design Rules\n\n';
+        output += '## File Information\n';
+        output += `Type: ${result.type}\n`;
+        output += `File ID: ${result.fileId}\n`;
+        output += `Title: ${result.title || 'Not specified'}\n`;
+        output += `Node ID: ${result.nodeId || 'Not specified'}\n\n`;
+
         console.log(chalk.green('\nFigma URL details:'));
         console.log(chalk.blue('Type:'), result.type);
         console.log(chalk.blue('File ID:'), result.fileId);
@@ -761,7 +1090,14 @@ async function main() {
 
         console.log(chalk.green('\nFetching file data from Figma API...'));
         const figmaData = await getFigmaFileData(result.fileId);
+        // Save Figma file data to figma.json
+        const outputPath = join(process.cwd(), 'figma.json');
+        fs.writeFileSync(outputPath, JSON.stringify(figmaData, null, 2));
+        console.log(chalk.green('\nSaved Figma file data to:'), outputPath);
         
+        output += `File Name: ${figmaData.name}\n`;
+        output += `Last Modified: ${new Date(figmaData.lastModified).toLocaleString()}\n\n`;
+
         console.log(chalk.green('\nFile Information:'));
         console.log(chalk.blue('Name:'), figmaData.name);
         console.log(chalk.blue('Last Modified:'), new Date(figmaData.lastModified).toLocaleString());
@@ -769,43 +1105,155 @@ async function main() {
         console.log(chalk.green('\nProcessing design tokens...'));
         const tokens = processDesignTokens(figmaData.document);
         
+        // Add token summary
+        output += '## Design Tokens Summary\n';
+        output += formatTokenCount(tokens) + '\n\n';
+
         console.log(chalk.green('\nDesign Tokens Summary:'));
         console.log(chalk.blue('Total tokens found:'), formatTokenCount(tokens));
 
-        // Print detailed token information
+        // Capture detailed token information
+        output += '## Typography\n\n';
+        Object.entries(tokens.typography.headings).forEach(([level, styles]) => {
+            if (styles.length > 0) {
+                output += `### ${level.toUpperCase()}\n`;
+                styles.forEach(style => {
+                    output += `- ${style.name}\n`;
+                    output += `  - Font: ${style.style.fontFamily} (${style.style.fontWeight})\n`;
+                    output += `  - Size: ${style.style.fontSize}px\n`;
+                    output += `  - Line Height: ${style.style.lineHeight}\n`;
+                    if (style.style.letterSpacing) {
+                        output += `  - Letter Spacing: ${style.style.letterSpacing}\n`;
+                    }
+                    output += '\n';
+                });
+            }
+        });
+
+        if (tokens.typography.body.length > 0) {
+            output += '### Body Styles\n';
+            tokens.typography.body.forEach(style => {
+                output += `- ${style.name}\n`;
+                output += `  - Font: ${style.style.fontFamily} (${style.style.fontWeight})\n`;
+                output += `  - Size: ${style.style.fontSize}px\n`;
+                output += `  - Line Height: ${style.style.lineHeight}\n\n`;
+            });
+        }
+
+        output += '## Colors\n\n';
+        Object.entries(tokens.colors).forEach(([category, colors]) => {
+            if (colors.length > 0) {
+                output += `### ${category.toUpperCase()}\n`;
+                colors.forEach(color => {
+                    output += `- ${color.name}\n`;
+                    output += `  - HEX: ${color.hex}\n`;
+                    output += `  - RGB: ${color.color.r}, ${color.color.g}, ${color.color.b}\n`;
+                    if (color.opacity !== 1) {
+                        output += `  - Opacity: ${color.opacity}\n`;
+                    }
+                    output += '\n';
+                });
+            }
+        });
+
+        // Print detailed token information to console
         printDetailedTokens(tokens);
 
         // Process and print canvas information
         const canvases = processCanvases(figmaData.document);
+        output += '## Canvases and Frames\n\n';
+        canvases.forEach(canvas => {
+            output += `### ${canvas.name}\n`;
+            output += `- ID: ${canvas.id}\n`;
+            output += `- Type: ${canvas.type}\n`;
+            output += `- Total Elements: ${canvas.children}\n`;
+            if (canvas.frames && canvas.frames.length > 0) {
+                output += `\n#### Frames (${canvas.frames.length})\n`;
+                canvas.frames.forEach(frame => {
+                    output += `\n##### ${frame.name}\n`;
+                    output += `- ID: ${frame.id}\n`;
+                    if (frame.size.width && frame.size.height) {
+                        output += `- Size: ${frame.size.width}x${frame.size.height}\n`;
+                    }
+                    if (frame.layoutMode) {
+                        output += `- Layout: ${frame.layoutMode}\n`;
+                        output += `- Item Spacing: ${frame.itemSpacing}\n`;
+                    }
+                });
+            }
+            output += '\n';
+        });
+
         printCanvasDetails(canvases);
 
         // Process and print component instances
         const instances = processComponentInstances(figmaData.document);
+        output += '## Component Instances\n\n';
+        instances.forEach(instance => {
+            output += `### ${instance.name}\n`;
+            output += `- ID: ${instance.id}\n`;
+            output += `- Component ID: ${instance.componentId}\n`;
+            if (instance.size.width && instance.size.height) {
+                output += `- Size: ${instance.size.width}x${instance.size.height}\n`;
+            }
+            output += '\n';
+        });
+
         printComponentInstances(instances);
 
-        // Generate and print component structure as YAML
-        console.log(chalk.green('\nCOMPONENT STRUCTURE:'));
+        // Generate and print component structure
+        output += '## Component Structure\n\n```yaml\n';
         const componentYAML = generateComponentYAML(tokens.components, instances);
+        output += componentYAML;
+        output += '```\n\n';
+
+        console.log(chalk.green('\nCOMPONENT STRUCTURE:'));
         console.log(chalk.white(componentYAML));
 
         // Generate pseudo components and frames
         const frames = canvases.flatMap(canvas => canvas.frames);
         const pseudoCode = await generateAllPseudoCode(tokens.components, instances, frames, tokens);
         
-        // Add pseudo code to the output
-        const outputPath = 'design-tokens.json';
-        await fs.promises.writeFile(outputPath, JSON.stringify({
-            tokens,
-            canvases,
-            instances,
-            componentStructure: componentYAML,
-            pseudoCode: {
-                components: Object.fromEntries(pseudoCode.components),
-                frames: Object.fromEntries(pseudoCode.frames)
+        // Add pseudo code
+        output += '## Pseudo Components\n\n```xml\n';
+        pseudoCode.components.forEach((component, id) => {
+            output += `# ${component.componentName}\n`;
+            output += component.pseudoCode + '\n\n';
+        });
+        output += '```\n\n';
+
+        output += '## Frame Layouts\n\n```xml\n';
+        pseudoCode.frames.forEach((frame, id) => {
+            output += `# ${frame.frameName}\n`;
+            output += frame.pseudoCode + '\n\n';
+        });
+        output += '```\n';
+
+        // Generate Tailwind theme if requested
+        if (generateTailwind) {
+            console.log(chalk.green('\nGenerating Tailwind theme...'));
+            const initialTheme = generateTailwindTheme(tokens);
+            
+            console.log(chalk.blue('Enhancing Tailwind theme with GPT-4o...'));
+            const enhancedTheme = await enhanceTailwindTheme(
+                JSON.parse(initialTheme.replace('module.exports = ', '').replace(/^\s+/, '')),
+                pseudoCode.components,
+                pseudoCode.frames
+            );
+
+            if (enhancedTheme) {
+                await fs.promises.writeFile('.tailwind.theme.js', enhancedTheme);
+                console.log(chalk.green('Enhanced Tailwind theme saved to .tailwind.theme.js'));
+            } else {
+                // Fallback to initial theme if enhancement fails
+                await fs.promises.writeFile('.tailwind.theme.js', initialTheme);
+                console.log(chalk.yellow('Saved initial Tailwind theme to .tailwind.theme.js (enhancement failed)'));
             }
-        }, null, 2));
-        
-        console.log(chalk.green(`\nAll information saved to ${outputPath}`));
+        }
+
+        // Save to .designrules file
+        await fs.promises.writeFile('.designrules', output);
+        console.log(chalk.green('\nDesign rules saved to .designrules'));
 
     } catch (error) {
         console.error(chalk.red(`Error: ${error.message}`));
