@@ -331,6 +331,116 @@ function printDetailedTokens(tokens) {
     }
 }
 
+function processCanvases(document) {
+    if (!document || !document.children) return [];
+
+    return document.children.map(canvas => {
+        const frames = canvas.children
+            ?.filter(child => child.type === 'FRAME')
+            ?.map(frame => ({
+                id: frame.id,
+                name: frame.name,
+                type: frame.type,
+                size: {
+                    width: frame.absoluteBoundingBox?.width || null,
+                    height: frame.absoluteBoundingBox?.height || null
+                },
+                position: {
+                    x: frame.x || 0,
+                    y: frame.y || 0
+                },
+                background: frame.backgroundColor,
+                layoutMode: frame.layoutMode,
+                itemSpacing: frame.itemSpacing,
+                padding: {
+                    top: frame.paddingTop,
+                    right: frame.paddingRight,
+                    bottom: frame.paddingBottom,
+                    left: frame.paddingLeft
+                },
+                constraints: frame.constraints,
+                clipsContent: frame.clipsContent,
+                elements: frame.children?.length || 0
+            })) || [];
+
+        return {
+            id: canvas.id,
+            name: canvas.name,
+            type: canvas.type,
+            backgroundColor: canvas.backgroundColor,
+            children: canvas.children ? canvas.children.length : 0,
+            size: {
+                width: canvas.absoluteBoundingBox?.width || null,
+                height: canvas.absoluteBoundingBox?.height || null
+            },
+            constraints: canvas.constraints || null,
+            exportSettings: canvas.exportSettings || [],
+            flowStartingPoints: canvas.flowStartingPoints || [],
+            prototypeStartNode: canvas.prototypeStartNode || null,
+            frames
+        };
+    });
+}
+
+function printCanvasDetails(canvases) {
+    console.log(chalk.green('\nCANVASES AND FRAMES:'));
+    canvases.forEach(canvas => {
+        console.log(chalk.blue(`\n${canvas.name}:`));
+        console.log(chalk.gray(`  ID: ${canvas.id}`));
+        console.log(chalk.gray(`  Type: ${canvas.type}`));
+        console.log(chalk.gray(`  Total Elements: ${canvas.children}`));
+        
+        if (canvas.size.width && canvas.size.height) {
+            console.log(chalk.gray(`  Size: ${canvas.size.width}x${canvas.size.height}`));
+        }
+        
+        if (canvas.backgroundColor) {
+            const bg = canvas.backgroundColor;
+            const hex = rgbToHex(
+                Math.round(bg.r * 255),
+                Math.round(bg.g * 255),
+                Math.round(bg.b * 255)
+            );
+            console.log(chalk.gray(`  Background: ${hex} (opacity: ${bg.a})`));
+        }
+
+        if (canvas.flowStartingPoints && canvas.flowStartingPoints.length > 0) {
+            console.log(chalk.gray(`  Prototype Starting Points: ${canvas.flowStartingPoints.length}`));
+        }
+
+        if (canvas.exportSettings && canvas.exportSettings.length > 0) {
+            console.log(chalk.gray(`  Export Settings: ${canvas.exportSettings.length} formats`));
+        }
+
+        // Print frames information
+        if (canvas.frames && canvas.frames.length > 0) {
+            console.log(chalk.yellow(`\n  Frames (${canvas.frames.length}):`));
+            canvas.frames.forEach(frame => {
+                console.log(chalk.white(`\n    ${frame.name}:`));
+                console.log(chalk.gray(`      ID: ${frame.id}`));
+                if (frame.size.width && frame.size.height) {
+                    console.log(chalk.gray(`      Size: ${frame.size.width}x${frame.size.height}`));
+                }
+                console.log(chalk.gray(`      Position: x=${frame.position.x}, y=${frame.position.y}`));
+                console.log(chalk.gray(`      Elements: ${frame.elements}`));
+                
+                if (frame.layoutMode) {
+                    console.log(chalk.gray(`      Layout: ${frame.layoutMode}`));
+                    console.log(chalk.gray(`      Item Spacing: ${frame.itemSpacing}`));
+                    const hasPadding = Object.values(frame.padding).some(v => v !== 0);
+                    if (hasPadding) {
+                        console.log(chalk.gray(`      Padding: ${frame.padding.top} ${frame.padding.right} ${frame.padding.bottom} ${frame.padding.left}`));
+                    }
+                }
+                
+                if (frame.constraints) {
+                    console.log(chalk.gray(`      Constraints: ${JSON.stringify(frame.constraints)}`));
+                }
+            });
+        }
+    });
+}
+
 async function getFigmaFileData(fileId) {
     const response = await fetch(`https://api.figma.com/v1/files/${fileId}`, {
         headers: {
@@ -370,10 +480,17 @@ async function main() {
         // Print detailed token information
         printDetailedTokens(tokens);
 
+        // Process and print canvas information
+        const canvases = processCanvases(figmaData.document);
+        printCanvasDetails(canvases);
+
         // Optional: Save tokens to a file
         const outputPath = 'design-tokens.json';
-        await fs.promises.writeFile(outputPath, JSON.stringify(tokens, null, 2));
-        console.log(chalk.green(`\nTokens saved to ${outputPath}`));
+        await fs.promises.writeFile(outputPath, JSON.stringify({
+            tokens,
+            canvases
+        }, null, 2));
+        console.log(chalk.green(`\nTokens and canvas information saved to ${outputPath}`));
 
     } catch (error) {
         console.error(chalk.red(`Error: ${error.message}`));
