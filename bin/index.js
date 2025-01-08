@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import fs from 'fs';
+import OpenAI from 'openai';
 
 // Load environment variables
 const __filename = fileURLToPath(import.meta.url);
@@ -23,6 +24,11 @@ if (!process.env.FIGMA_ACCESS_TOKEN) {
     console.error(chalk.red('Please set FIGMA_ACCESS_TOKEN in your .env file'));
     process.exit(1);
 }
+
+// Initialize OpenAI client
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY
+});
 
 function parseFigmaUrl(url) {
     try {
@@ -455,6 +461,295 @@ async function getFigmaFileData(fileId) {
     return response.json();
 }
 
+function processComponentInstances(node, instances = [], parentName = '') {
+    if (!node) return instances;
+
+    const fullName = parentName ? `${parentName}/${node.name}` : node.name;
+
+    if (node.type === 'INSTANCE') {
+        instances.push({
+            id: node.id,
+            name: fullName,
+            componentId: node.componentId,
+            mainComponent: node.mainComponent,
+            styles: node.styles || null,
+            position: {
+                x: node.x || 0,
+                y: node.y || 0
+            },
+            size: {
+                width: node.absoluteBoundingBox?.width || null,
+                height: node.absoluteBoundingBox?.height || null
+            }
+        });
+    }
+
+    if (node.children) {
+        node.children.forEach(child => {
+            processComponentInstances(child, instances, fullName);
+        });
+    }
+
+    return instances;
+}
+
+function generateComponentYAML(components, instances) {
+    // Create a map of component IDs to their instances
+    const componentMap = new Map();
+    components.forEach(comp => {
+        componentMap.set(comp.id, {
+            name: comp.name,
+            type: comp.type,
+            description: comp.description,
+            instances: []
+        });
+    });
+
+    // Map instances to their components
+    instances.forEach(instance => {
+        if (componentMap.has(instance.componentId)) {
+            componentMap.get(instance.componentId).instances.push({
+                id: instance.id,
+                name: instance.name
+            });
+        }
+    });
+
+    // Generate YAML-like string
+    let yaml = 'components:\n';
+    componentMap.forEach((value, key) => {
+        yaml += `  ${key}:\n`;
+        yaml += `    name: "${value.name}"\n`;
+        yaml += `    type: ${value.type}\n`;
+        if (value.description) {
+            yaml += `    description: "${value.description}"\n`;
+        }
+        if (value.instances.length > 0) {
+            yaml += '    instances:\n';
+            value.instances.forEach(instance => {
+                yaml += `      - id: ${instance.id}\n`;
+                yaml += `        name: "${instance.name}"\n`;
+            });
+        }
+        yaml += '\n';
+    });
+
+    return yaml;
+}
+
+function printComponentInstances(instances) {
+    console.log(chalk.green('\nCOMPONENT INSTANCES:'));
+    instances.forEach(instance => {
+        console.log(chalk.blue(`\n${instance.name}:`));
+        console.log(chalk.gray(`  ID: ${instance.id}`));
+        console.log(chalk.gray(`  Component ID: ${instance.componentId}`));
+        if (instance.size.width && instance.size.height) {
+            console.log(chalk.gray(`  Size: ${instance.size.width}x${instance.size.height}`));
+        }
+        console.log(chalk.gray(`  Position: x=${instance.position.x}, y=${instance.position.y}`));
+        if (instance.styles) {
+            console.log(chalk.gray('  Styles:'));
+            Object.entries(instance.styles).forEach(([key, value]) => {
+                console.log(chalk.gray(`    ${key}: ${value}`));
+            });
+        }
+    });
+}
+
+async function generatePseudoComponent(component, instance, tokens) {
+    const designSystem = {
+        typography: {
+            headings: Object.fromEntries(
+                Object.entries(tokens.typography.headings)
+                    .map(([key, styles]) => [key, styles[0]?.style || null])
+                    .filter(([_, style]) => style !== null)
+            ),
+            body: tokens.typography.body[0]?.style || null
+        },
+        colors: {
+            primary: tokens.colors.primary.map(c => ({ name: c.name, hex: c.hex })),
+            secondary: tokens.colors.secondary.map(c => ({ name: c.name, hex: c.hex })),
+            text: tokens.colors.text.map(c => ({ name: c.name, hex: c.hex })),
+            background: tokens.colors.background.map(c => ({ name: c.name, hex: c.hex }))
+        },
+        spacing: tokens.spacing.map(s => ({
+            name: s.name,
+            value: s.itemSpacing,
+            padding: s.padding
+        })),
+        effects: {
+            shadows: tokens.effects.shadows.map(s => ({ name: s.name, value: s.value })),
+            blurs: tokens.effects.blurs.map(b => ({ name: b.name, value: b.value }))
+        }
+    };
+
+    const functions = [
+        {
+            name: "create_pseudo_component",
+            description: "Generate a pseudo-XML component based on Figma component details",
+            parameters: {
+                type: "object",
+                properties: {
+                    componentName: {
+                        type: "string",
+                        description: "The name of the component"
+                    },
+                    pseudoCode: {
+                        type: "string",
+                        description: "The pseudo-XML code for the component"
+                    }
+                },
+                required: ["componentName", "pseudoCode"]
+            }
+        }
+    ];
+
+    const prompt = `Design System Details:
+${JSON.stringify(designSystem, null, 2)}
+
+Component to Generate:
+Name: ${component.name}
+Type: ${component.type}
+Description: ${component.description || 'No description provided'}
+Size: ${instance.size.width}x${instance.size.height}
+Styles: ${JSON.stringify(instance.styles || {})}
+
+Requirements:
+1. Generate pseudo-XML code that represents this component
+2. Use semantic element names
+3. Include basic styling attributes
+4. Make it accessible
+5. Keep it simple and readable
+6. Use design system tokens where applicable
+
+Example format:
+<Button primary>
+  <Icon name="star" />
+  <Text>Click me</Text>
+</Button>
+
+Generate ONLY the pseudo-XML code without any additional explanation.`;
+
+    try {
+        const completion = await openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [{ role: "user", content: prompt }],
+            functions,
+            function_call: { name: "create_pseudo_component" }
+        });
+
+        const response = JSON.parse(completion.choices[0].message.function_call.arguments);
+        return response;
+    } catch (error) {
+        console.error(chalk.red(`Error generating pseudo component: ${error.message}`));
+        return null;
+    }
+}
+
+async function generatePseudoFrame(frame, components, tokens) {
+    const functions = [
+        {
+            name: "create_pseudo_frame",
+            description: "Generate a pseudo-XML frame layout based on Figma frame details",
+            parameters: {
+                type: "object",
+                properties: {
+                    frameName: {
+                        type: "string",
+                        description: "The name of the frame"
+                    },
+                    pseudoCode: {
+                        type: "string",
+                        description: "The pseudo-XML code for the frame layout"
+                    }
+                },
+                required: ["frameName", "pseudoCode"]
+            }
+        }
+    ];
+
+    const prompt = `Frame Details:
+Name: ${frame.name}
+Size: ${frame.size.width}x${frame.size.height}
+Layout: ${frame.layoutMode || 'FREE'}
+Spacing: ${frame.itemSpacing}
+Padding: ${JSON.stringify(frame.padding)}
+Elements: ${frame.elements}
+
+Available Components:
+${components.map(c => `- ${c.name}`).join('\n')}
+
+Requirements:
+1. Generate pseudo-XML layout code for this frame
+2. Use semantic container elements
+3. Include layout attributes (flex, grid, etc.)
+4. Use appropriate spacing and padding
+5. Place components in a logical layout
+6. Keep it simple and readable
+
+Example format:
+<Frame name="Header" layout="horizontal" spacing="24">
+  <Logo />
+  <Navigation layout="horizontal" spacing="16">
+    <Link>Home</Link>
+    <Link>About</Link>
+  </Navigation>
+  <Button primary>Sign Up</Button>
+</Frame>
+
+Generate ONLY the pseudo-XML code without any additional explanation.`;
+
+    try {
+        const completion = await openai.chat.completions.create({
+            model: "gpt-4",
+            messages: [{ role: "user", content: prompt }],
+            functions,
+            function_call: { name: "create_pseudo_frame" }
+        });
+
+        const response = JSON.parse(completion.choices[0].message.function_call.arguments);
+        return response;
+    } catch (error) {
+        console.error(chalk.red(`Error generating pseudo frame: ${error.message}`));
+        return null;
+    }
+}
+
+async function generateAllPseudoCode(components, instances, frames, tokens) {
+    console.log(chalk.green('\nGenerating Pseudo Components:'));
+    const pseudoComponents = new Map();
+
+    // Generate components first
+    for (const component of components) {
+        const componentInstances = instances.filter(i => i.componentId === component.id);
+        if (componentInstances.length > 0) {
+            const mainInstance = componentInstances[0];
+            console.log(chalk.blue(`\nComponent: ${component.name}`));
+            
+            const pseudoComponent = await generatePseudoComponent(component, mainInstance, tokens);
+            if (pseudoComponent) {
+                pseudoComponents.set(component.id, pseudoComponent);
+                console.log(chalk.white(pseudoComponent.pseudoCode));
+            }
+        }
+    }
+
+    console.log(chalk.green('\nGenerating Frame Layouts:'));
+    const pseudoFrames = new Map();
+
+    // Generate frames using the components
+    for (const frame of frames) {
+        console.log(chalk.blue(`\nFrame: ${frame.name}`));
+        const pseudoFrame = await generatePseudoFrame(frame, components, tokens);
+        if (pseudoFrame) {
+            pseudoFrames.set(frame.id, pseudoFrame);
+            console.log(chalk.white(pseudoFrame.pseudoCode));
+        }
+    }
+
+    return { components: pseudoComponents, frames: pseudoFrames };
+}
+
 async function main() {
     try {
         const result = parseFigmaUrl(figmaUrl);
@@ -484,13 +779,33 @@ async function main() {
         const canvases = processCanvases(figmaData.document);
         printCanvasDetails(canvases);
 
-        // Optional: Save tokens to a file
+        // Process and print component instances
+        const instances = processComponentInstances(figmaData.document);
+        printComponentInstances(instances);
+
+        // Generate and print component structure as YAML
+        console.log(chalk.green('\nCOMPONENT STRUCTURE:'));
+        const componentYAML = generateComponentYAML(tokens.components, instances);
+        console.log(chalk.white(componentYAML));
+
+        // Generate pseudo components and frames
+        const frames = canvases.flatMap(canvas => canvas.frames);
+        const pseudoCode = await generateAllPseudoCode(tokens.components, instances, frames, tokens);
+        
+        // Add pseudo code to the output
         const outputPath = 'design-tokens.json';
         await fs.promises.writeFile(outputPath, JSON.stringify({
             tokens,
-            canvases
+            canvases,
+            instances,
+            componentStructure: componentYAML,
+            pseudoCode: {
+                components: Object.fromEntries(pseudoCode.components),
+                frames: Object.fromEntries(pseudoCode.frames)
+            }
         }, null, 2));
-        console.log(chalk.green(`\nTokens and canvas information saved to ${outputPath}`));
+        
+        console.log(chalk.green(`\nAll information saved to ${outputPath}`));
 
     } catch (error) {
         console.error(chalk.red(`Error: ${error.message}`));
