@@ -49,6 +49,41 @@ The AI will analyze your `.designrules` file and generate code that matches your
 - Border styles
 - And more...
 
+## How it Works
+
+fig4ai follows a sophisticated process to transform your Figma designs into AI-ready context:
+
+1. **Data Extraction**
+   - Connects to Figma API and retrieves comprehensive file data
+   - Processes complex nested JSON structure containing all design information
+   - Handles authentication and API rate limiting
+
+2. **Design Token Parsing**
+   - Parses the JSON structure hierarchically: Canvas > Frame > Component / Instance
+   - Extracts design tokens (colors, typography, spacing, effects)
+   - Organizes components and their instances with style references
+   - Maintains relationship between components and their variants
+
+3. **AI-Powered Transformation**
+   - For each Canvas, sends structured data to GPT-4o
+   - Generates semantic pseudo-code with complete styling context
+   - Preserves all design decisions, constraints, and relationships
+   - Includes accessibility considerations and responsive behaviors
+
+4. **Structured Documentation**
+   - Stores all design tokens and pseudo-code representations in `.designrules`
+   - Uses Markdown format for maximum compatibility
+   - Maintains hierarchical structure of the design system
+   - Preserves all style references and component relationships
+
+5. **AI Context Integration**
+   - `.designrules` file serves as a comprehensive design context
+   - When mentioned in AI-powered IDEs (Cursor/Windsurf), the file is parsed
+   - AI understands the complete design system and can generate accurate code
+   - Enables context-aware code generation based on your design system
+
+In essence, fig4ai transforms your Figma file into a structured AI context, making your design system programmatically accessible to AI tools.
+
 ## Usage
 
 ### Command Line
