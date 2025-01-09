@@ -21,9 +21,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 dotenv.config({ path: join(dirname(__dirname), '.env') });
 
-const args = process.argv.slice(2);
-const figmaUrl = args[0];
-
 // Validate required environment variables
 const requiredEnvVars = {
     'FIGMA_ACCESS_TOKEN': process.env.FIGMA_ACCESS_TOKEN,
@@ -47,10 +44,15 @@ if (missingEnvVars.length > 0) {
     process.exit(1);
 }
 
+const args = process.argv.slice(2);
+const figmaUrl = args[0] || process.env.FIGMA_DESIGN_URL;
+
 if (!figmaUrl) {
     console.error(chalk.red('Please provide a Figma URL'));
     console.log(chalk.blue('\nUsage:'));
     console.log('  npx fig4ai <figma-url>');
+    console.log(chalk.blue('\nOr set it in your .env file:'));
+    console.log(chalk.gray('FIGMA_DESIGN_URL=your_figma_url_here'));
     process.exit(1);
 }
 
