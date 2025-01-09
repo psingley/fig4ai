@@ -562,7 +562,7 @@ function printComponentInstances(instances) {
     });
 }
 
-async function generatePseudoComponent(component, instance, tokens) {
+async function generatePseudoComponent(component, instance, tokens, figmaData) {
     // Create a more detailed design system summary with exact values
     const designSystem = {
         typography: {
@@ -635,18 +635,22 @@ async function generatePseudoComponent(component, instance, tokens) {
 
     // Extract component-specific styles and references
     const componentStyles = {
-        styles: instance.styles || {},  // Style references from Figma
+        styles: {},  // Will be populated with expanded styles
         fills: instance.fills?.map(fill => {
             if (fill.type === 'SOLID') {
                 // Check if this fill comes from a style
-                const styleId = instance.styles?.fills;
+                const styleId = instance.styles?.fills || instance.styles?.fill;
                 if (styleId) {
                     // Find the style in tokens
                     const style = tokens.styles.find(s => s.id === styleId);
+                    // Find the actual style definition in the Figma data
+                    const styleDefinition = figmaData.styles?.[styleId];
                     return {
                         type: fill.type,
                         styleId,
                         styleName: style?.name || 'Unknown Style',
+                        styleType: 'fill',
+                        description: styleDefinition?.description || null,
                         color: {
                             hex: rgbToHex(
                                 Math.round(fill.color.r * 255),
@@ -674,32 +678,49 @@ async function generatePseudoComponent(component, instance, tokens) {
             return fill;
         }),
         effects: instance.effects?.map(effect => {
-            const styleId = instance.styles?.effects;
+            const styleId = instance.styles?.effects || instance.styles?.effect;
             if (styleId) {
                 const style = tokens.styles.find(s => s.id === styleId);
+                const styleDefinition = figmaData.styles?.[styleId];
                 return {
                     type: effect.type,
                     styleId,
                     styleName: style?.name || 'Unknown Style',
-                    ...effect
+                    styleType: 'effect',
+                    description: styleDefinition?.description || null,
+                    value: {
+                        ...effect,
+                        color: effect.color ? {
+                            hex: rgbToHex(
+                                Math.round(effect.color.r * 255),
+                                Math.round(effect.color.g * 255),
+                                Math.round(effect.color.b * 255)
+                            ),
+                            rgb: `${Math.round(effect.color.r * 255)},${Math.round(effect.color.g * 255)},${Math.round(effect.color.b * 255)}`,
+                            opacity: effect.color.a
+                        } : null
+                    }
                 };
             }
             return effect;
-        }),
-        strokes: instance.strokes?.map(stroke => {
-            const styleId = instance.styles?.strokes;
-            if (styleId) {
-                const style = tokens.styles.find(s => s.id === styleId);
-                return {
-                    type: stroke.type,
-                    styleId,
-                    styleName: style?.name || 'Unknown Style',
-                    ...stroke
-                };
-            }
-            return stroke;
         })
     };
+
+    // Expand all style references
+    if (instance.styles) {
+        Object.entries(instance.styles).forEach(([key, styleId]) => {
+            const style = tokens.styles.find(s => s.id === styleId);
+            const styleDefinition = figmaData.styles?.[styleId];
+            
+            componentStyles.styles[key] = {
+                id: styleId,
+                name: style?.name || 'Unknown Style',
+                type: key,
+                description: styleDefinition?.description || null,
+                value: styleDefinition || null
+            };
+        });
+    }
 
     const functions = [
         {
@@ -761,7 +782,7 @@ Generate ONLY the pseudo-XML code with detailed styling attributes, preferring s
 
     try {
         const completion = await openai.chat.completions.create({
-            model: "gpt-4",
+            model: "gpt-4o",
             messages: [{ role: "user", content: prompt }],
             functions,
             function_call: { name: "create_pseudo_component" }
@@ -775,7 +796,7 @@ Generate ONLY the pseudo-XML code with detailed styling attributes, preferring s
     }
 }
 
-async function generatePseudoFrame(frame, components, tokens) {
+async function generatePseudoFrame(frame, components, tokens, canvas) {
     const functions = [
         {
             name: "create_pseudo_frame",
@@ -797,16 +818,46 @@ async function generatePseudoFrame(frame, components, tokens) {
         }
     ];
 
-    const prompt = `Frame Details:
+    // Extract frame dimensions and properties for the summary
+    const frameSize = frame.absoluteBoundingBox ? {
+        width: frame.absoluteBoundingBox.width,
+        height: frame.absoluteBoundingBox.height
+    } : { width: 0, height: 0 };
+
+    const framePadding = {
+        top: frame.paddingTop || 0,
+        right: frame.paddingRight || 0,
+        bottom: frame.paddingBottom || 0,
+        left: frame.paddingLeft || 0
+    };
+
+    const canvasSize = canvas.absoluteBoundingBox ? {
+        width: canvas.absoluteBoundingBox.width,
+        height: canvas.absoluteBoundingBox.height
+    } : { width: 0, height: 0 };
+
+    const prompt = `Frame Summary:
 Name: ${frame.name}
-Size: ${frame.size.width}x${frame.size.height}
+Size: ${frameSize.width}x${frameSize.height}
 Layout: ${frame.layoutMode || 'FREE'}
-Spacing: ${frame.itemSpacing}
-Padding: ${JSON.stringify(frame.padding)}
-Elements: ${frame.elements}
+Spacing: ${frame.itemSpacing || 0}
+Padding: ${JSON.stringify(framePadding)}
+Elements: ${frame.children?.length || 0}
+Position: x=${frame.absoluteBoundingBox?.x || 0}, y=${frame.absoluteBoundingBox?.y || 0}
+
+Canvas Summary:
+Name: ${canvas.name}
+Type: ${canvas.type}
+Size: ${canvasSize.width}x${canvasSize.height}
 
 Available Components:
 ${components.map(c => `- ${c.name}`).join('\n')}
+
+Complete Frame Data:
+${JSON.stringify(frame, null, 2)}
+
+Complete Canvas Data:
+${JSON.stringify(canvas, null, 2)}
 
 Requirements:
 1. Generate pseudo-XML layout code for this frame
@@ -814,19 +865,31 @@ Requirements:
 3. Include layout attributes (flex, grid, etc.)
 4. Use appropriate spacing and padding
 5. Place components in a logical layout
-6. Keep it simple and readable
+6. Consider canvas context for positioning and constraints
+7. Include all text content exactly as specified in the frame data
+8. Preserve all styling information from the frame data
+9. Keep the hierarchy of nested elements
+10. Keep it readable while being accurate to the source data
 
 Example format:
-<Frame name="Header" layout="horizontal" spacing="24">
-  <Logo />
-  <Navigation layout="horizontal" spacing="16">
-    <Link>Home</Link>
-    <Link>About</Link>
-  </Navigation>
-  <Button primary>Sign Up</Button>
+<Frame 
+  name="${frame.name}" 
+  layout="${frame.layoutMode || 'FREE'}" 
+  spacing="${frame.itemSpacing || 0}" 
+  canvas="${canvas.name}"
+  position="x=${frame.absoluteBoundingBox?.x || 0},y=${frame.absoluteBoundingBox?.y || 0}"
+  size="w=${frameSize.width},h=${frameSize.height}"
+  constraints="${JSON.stringify(frame.constraints)}"
+  background="${JSON.stringify(frame.backgroundColor)}"
+  blendMode="${frame.blendMode}"
+  clipsContent="${frame.clipsContent}"
+>
+  <!-- Generate nested elements based on frame.children -->
+  <!-- Include all text content, styles, and properties -->
+  <!-- Use style references when available -->
 </Frame>
 
-Generate ONLY the pseudo-XML code without any additional explanation.`;
+Generate ONLY the pseudo-XML code without any additional explanation. Ensure all text content and styling from the frame data is accurately represented.`;
 
     try {
         const completion = await openai.chat.completions.create({
@@ -844,7 +907,7 @@ Generate ONLY the pseudo-XML code without any additional explanation.`;
     }
 }
 
-async function generateAllPseudoCode(components, instances, frames, tokens) {
+async function generateAllPseudoCode(components, instances, frames, tokens, figmaData) {
     console.log(chalk.green('\nGenerating Pseudo Components:'));
     const pseudoComponents = new Map();
 
@@ -855,7 +918,7 @@ async function generateAllPseudoCode(components, instances, frames, tokens) {
             const mainInstance = componentInstances[0];
             console.log(chalk.blue(`\nComponent: ${component.name}`));
             
-            const pseudoComponent = await generatePseudoComponent(component, mainInstance, tokens);
+            const pseudoComponent = await generatePseudoComponent(component, mainInstance, tokens, figmaData);
             if (pseudoComponent) {
                 pseudoComponents.set(component.id, pseudoComponent);
                 console.log(chalk.white(pseudoComponent.pseudoCode));
@@ -867,12 +930,14 @@ async function generateAllPseudoCode(components, instances, frames, tokens) {
     const pseudoFrames = new Map();
 
     // Generate frames using the components
-    for (const frame of frames) {
-        console.log(chalk.blue(`\nFrame: ${frame.name}`));
-        const pseudoFrame = await generatePseudoFrame(frame, components, tokens);
-        if (pseudoFrame) {
-            pseudoFrames.set(frame.id, pseudoFrame);
-            console.log(chalk.white(pseudoFrame.pseudoCode));
+    for (const canvas of figmaData.document.children) {
+        for (const frame of canvas.children?.filter(child => child.type === 'FRAME') || []) {
+            console.log(chalk.blue(`\nFrame: ${frame.name} (Canvas: ${canvas.name})`));
+            const pseudoFrame = await generatePseudoFrame(frame, components, tokens, canvas);
+            if (pseudoFrame) {
+                pseudoFrames.set(frame.id, pseudoFrame);
+                console.log(chalk.white(pseudoFrame.pseudoCode));
+            }
         }
     }
 
@@ -1212,7 +1277,7 @@ async function main() {
 
         // Generate pseudo components and frames
         const frames = canvases.flatMap(canvas => canvas.frames);
-        const pseudoCode = await generateAllPseudoCode(tokens.components, instances, frames, tokens);
+        const pseudoCode = await generateAllPseudoCode(tokens.components, instances, frames, tokens, figmaData);
         
         // Add pseudo code
         output += '## Pseudo Components\n\n```xml\n';
