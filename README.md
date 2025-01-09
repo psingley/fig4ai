@@ -88,12 +88,6 @@ Contributions are welcome! Please feel free to submit a Pull Request. For major 
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Acknowledgments
-
-- [Figma](https://www.figma.com/) for their amazing design platform
-- [OpenAI](https://openai.com/) for their powerful AI models
-- All the contributors who have helped with the project
-
 ## Support
 
 If you encounter any issues or have questions, please:
