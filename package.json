@@ -1,20 +1,22 @@
 {
-  "name": "figtell",
-  "version": "1.0.0",
-  "description": "A CLI tool to parse Figma URLs",
+  "name": "fig4ai",
+  "version": "0.1.0",
+  "description": "A CLI tool to parse Figma URLs and generate AI-powered design rules for your AI editor.",
   "main": "src/index.js",
   "bin": {
-    "figtell": "./src/index.js"
+    "fig4ai": "./src/index.js"
   },
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "figtell": "node src/index.js"
+    "fig4ai": "node src/index.js"
   },
   "keywords": [
     "figma",
     "cli",
-    "url-parser"
+    "url-parser",
+    "ai",
+    "design-rules"
   ],
   "author": "",
   "license": "MIT",

@@ -24,15 +24,33 @@ dotenv.config({ path: join(dirname(__dirname), '.env') });
 const args = process.argv.slice(2);
 const figmaUrl = args[0];
 
-if (!figmaUrl) {
-    console.error(chalk.red('Please provide a Figma URL'));
-    console.log(chalk.blue('\nUsage:'));
-    console.log('  npx figtell <figma-url>');
+// Validate required environment variables
+const requiredEnvVars = {
+    'FIGMA_ACCESS_TOKEN': process.env.FIGMA_ACCESS_TOKEN,
+    'OPENAI_API_KEY': process.env.OPENAI_API_KEY
+};
+
+const missingEnvVars = Object.entries(requiredEnvVars)
+    .filter(([_, value]) => !value)
+    .map(([key]) => key);
+
+if (missingEnvVars.length > 0) {
+    console.error(chalk.red('\nMissing required environment variables:'));
+    missingEnvVars.forEach(envVar => {
+        console.error(chalk.yellow(`  • ${envVar}`));
+    });
+    console.error(chalk.blue('\nPlease set these variables in your .env file:'));
+    console.error(chalk.gray('\n# .env'));
+    missingEnvVars.forEach(envVar => {
+        console.error(chalk.gray(`${envVar}=your_${envVar.toLowerCase()}_here`));
+    });
     process.exit(1);
 }
 
-if (!process.env.FIGMA_ACCESS_TOKEN) {
-    console.error(chalk.red('Please set FIGMA_ACCESS_TOKEN in your .env file'));
+if (!figmaUrl) {
+    console.error(chalk.red('Please provide a Figma URL'));
+    console.log(chalk.blue('\nUsage:'));
+    console.log('  npx fig4ai <figma-url>');
     process.exit(1);
 }
 
