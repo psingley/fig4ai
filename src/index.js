@@ -14,7 +14,7 @@ import { parseFigmaUrl } from './utils/url-parser.js';
 import { getFigmaFileData } from './utils/api.js';
 import { processDesignTokens, formatTokenCount } from './processors/token-processor.js';
 import { processCanvases, processComponentInstances, generateComponentYAML } from './processors/canvas-processor.js';
-import { generateAllPseudoCode } from './generators/pseudo-generator.js';
+import { generateAllPseudoCode, initializeAI } from './generators/pseudo-generator.js';
 
 // Load environment variables
 const __filename = fileURLToPath(import.meta.url);
@@ -23,8 +23,13 @@ dotenv.config({ path: join(dirname(__dirname), '.env') });
 
 // Validate required environment variables
 const requiredEnvVars = {
-    'FIGMA_ACCESS_TOKEN': process.env.FIGMA_ACCESS_TOKEN,
-    'OPENAI_API_KEY': process.env.OPENAI_API_KEY
+    'FIGMA_ACCESS_TOKEN': process.env.FIGMA_ACCESS_TOKEN
+};
+
+// Optional environment variables
+const optionalEnvVars = {
+    'OPENAI_API_KEY': process.env.OPENAI_API_KEY,
+    'CLAUDE_API_KEY': process.env.CLAUDE_API_KEY
 };
 
 const missingEnvVars = Object.entries(requiredEnvVars)
@@ -44,21 +49,42 @@ if (missingEnvVars.length > 0) {
     process.exit(1);
 }
 
+// Parse command line arguments
 const args = process.argv.slice(2);
 const figmaUrl = args[0] || process.env.FIGMA_DESIGN_URL;
+const modelArg = args.find(arg => arg.startsWith('--model='));
+const noAI = args.includes('--no-ai');
+const model = modelArg ? modelArg.split('=')[1].toLowerCase() : 'claude';
 
 if (!figmaUrl) {
     console.error(chalk.red('Please provide a Figma URL'));
     console.log(chalk.blue('\nUsage:'));
-    console.log('  npx fig4ai <figma-url>');
+    console.log('  npx fig4ai <figma-url> [--model=claude|gpt4] [--no-ai]');
+    console.log(chalk.blue('\nOptions:'));
+    console.log('  --model=claude|gpt4    Choose AI model (default: claude)');
+    console.log('  --no-ai                Skip AI enhancements and output raw data');
     console.log(chalk.blue('\nOr set it in your .env file:'));
     console.log(chalk.gray('FIGMA_DESIGN_URL=your_figma_url_here'));
     process.exit(1);
 }
 
+// Check if AI enhancement is possible and desired
+const hasAICapability = !noAI && ((model === 'claude' && process.env.CLAUDE_API_KEY) || 
+                                 (model === 'gpt4' && process.env.OPENAI_API_KEY));
+
+if (noAI) {
+    console.info(chalk.blue('\nAI enhancement disabled via --no-ai flag.'));
+} else if (!hasAICapability) {
+    console.warn(chalk.yellow('\nNo AI API keys found. Running without AI enhancement.'));
+    console.warn(chalk.gray('To enable AI features, set CLAUDE_API_KEY or OPENAI_API_KEY in your .env file.'));
+}
+
 async function main() {
     const spinner = ora();
     try {
+        // Initialize AI with selected model
+        initializeAI(model);
+
         const result = parseFigmaUrl(figmaUrl);
         let output = '';
 
@@ -187,14 +213,12 @@ async function main() {
         // Add pseudo code
         output += '## Pseudo Components\n\n```xml\n';
         pseudoCode.components.forEach((component, id) => {
-            output += `# ${component.componentName}\n`;
             output += component.pseudoCode + '\n\n';
         });
         output += '```\n\n';
 
         output += '## Frame Layouts\n\n```xml\n';
         pseudoCode.frames.forEach((frame, id) => {
-            output += `# ${frame.frameName}\n`;
             output += frame.pseudoCode + '\n\n';
         });
         output += '```\n';
@@ -205,7 +229,7 @@ async function main() {
         spinner.succeed('Design rules saved successfully');
 
     } catch (error) {
-        spinner.fail(`Error: ${error.message}`);
+        spinner.fail(chalk.red('Error: ' + error.message));
         process.exit(1);
     }
 }

@@ -2,12 +2,42 @@ import OpenAI from 'openai';
 import ora from 'ora';
 import chalk from 'chalk';
 import { rgbToHex } from '../utils/color.js';
+import { ClaudeClient } from '../utils/claude-api.js';
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-});
+let client;
+let hasAICapability = false;
+
+export function initializeAI(model = 'claude') {
+    // Check if --no-ai flag is present
+    if (process.argv.includes('--no-ai')) {
+        hasAICapability = false;
+        return;
+    }
+
+    try {
+        if (model === 'gpt4' && process.env.OPENAI_API_KEY) {
+            client = new OpenAI({
+                apiKey: process.env.OPENAI_API_KEY
+            });
+            hasAICapability = true;
+        } else if (model === 'claude' && process.env.CLAUDE_API_KEY) {
+            client = new ClaudeClient(process.env.CLAUDE_API_KEY);
+            hasAICapability = true;
+        }
+    } catch (error) {
+        console.warn(chalk.yellow('Failed to initialize AI client:', error.message));
+        hasAICapability = false;
+    }
+}
 
 async function generatePseudoComponent(component, instance, tokens, figmaData) {
+    if (!hasAICapability || !client) {
+        return {
+            componentName: component.name,
+            pseudoCode: `# ${component.name}\n\`\`\`\n${JSON.stringify(instance, null, 2)}\n\`\`\``
+        };
+    }
+
     // Create a more detailed design system summary with exact values
     const designSystem = {
         typography: {
@@ -189,7 +219,10 @@ async function generatePseudoComponent(component, instance, tokens, figmaData) {
     ];
 
     const prompt = `Design System Details:
+
+\`\`\`
 ${JSON.stringify(designSystem, null, 2)}
+\`\`\`
 
 Component to Generate:
 Name: ${component.name}
@@ -198,7 +231,9 @@ Description: ${component.description || 'No description provided'}
 Size: ${instance.size.width}x${instance.size.height}
 
 Component Specific Styles and References:
+\`\`\`
 ${JSON.stringify(componentStyles, null, 2)}
+\`\`\`
 
 Requirements:
 1. Generate pseudo-XML code that represents this component
@@ -226,21 +261,31 @@ Example format:
 Generate ONLY the pseudo-XML code with detailed styling attributes, preferring style references over direct values.`;
 
     try {
-        const completion = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [{ role: "user", content: prompt }],
+        const completion = await client.chat(
+            [{ role: "user", content: prompt }],
             functions,
-            function_call: { name: "create_pseudo_component" }
-        });
+            { name: "create_pseudo_component" }
+        );
 
         const response = JSON.parse(completion.choices[0].message.function_call.arguments);
         return response;
     } catch (error) {
-        throw new Error(`Error generating pseudo component: ${error.message}`);
+        console.warn(chalk.yellow(`Skipping pseudo generation for component ${component.name} - ${error.message}`));
+        return {
+            componentName: component.name,
+            pseudoCode: `# ${component.name}\n${JSON.stringify(instance, null, 2)}`
+        };
     }
 }
 
 async function generatePseudoFrame(frame, components, tokens, canvas) {
+    if (!hasAICapability || !client) {
+        return {
+            frameName: frame.name,
+            pseudoCode: `# ${frame.name} (Canvas: ${canvas.name})\n${JSON.stringify(frame, null, 2)}`
+        };
+    }
+
     const functions = [
         {
             name: "create_pseudo_frame",
@@ -298,10 +343,14 @@ Available Components:
 ${components.map(c => `- ${c.name}`).join('\n')}
 
 Complete Frame Data:
+\`\`\`
 ${JSON.stringify(frame, null, 2)}
+\`\`\`
 
 Complete Canvas Data:
+\`\`\`
 ${JSON.stringify(canvas, null, 2)}
+\`\`\`
 
 Requirements:
 1. Generate pseudo-XML layout code for this frame
@@ -336,17 +385,20 @@ Example format:
 Generate ONLY the pseudo-XML code without any additional explanation. Ensure all text content and styling from the frame data is accurately represented.`;
 
     try {
-        const completion = await openai.chat.completions.create({
-            model: "gpt-4o",
-            messages: [{ role: "user", content: prompt }],
+        const completion = await client.chat(
+            [{ role: "user", content: prompt }],
             functions,
-            function_call: { name: "create_pseudo_frame" }
-        });
+            { name: "create_pseudo_frame" }
+        );
 
         const response = JSON.parse(completion.choices[0].message.function_call.arguments);
         return response;
     } catch (error) {
-        throw new Error(`Error generating pseudo frame: ${error.message}`);
+        console.warn(chalk.yellow(`Skipping pseudo generation for frame ${frame.name} - ${error.message}`));
+        return {
+            frameName: frame.name,
+            pseudoCode: `# ${frame.name} (Canvas: ${canvas.name})\n${JSON.stringify(frame, null, 2)}`
+        };
     }
 }
 
@@ -354,10 +406,14 @@ export async function generateAllPseudoCode(components, instances, frames, token
     const pseudoComponents = new Map();
     const spinner = ora();
 
+    if (!hasAICapability) {
+        spinner.info('Running without AI enhancement - will output raw data');
+    }
+
     // Generate components first
-    spinner.start('Generating pseudo components...');
+    spinner.start('Processing components...');
     for (const component of components) {
-        spinner.text = `Generating component: ${component.name}`;
+        spinner.text = `Processing component: ${component.name}`;
         const componentInstances = instances.filter(i => i.componentId === component.id);
         if (componentInstances.length > 0) {
             const mainInstance = componentInstances[0];
@@ -365,14 +421,14 @@ export async function generateAllPseudoCode(components, instances, frames, token
             if (pseudoComponent) {
                 pseudoComponents.set(component.id, pseudoComponent);
                 spinner.stop();
-                console.log(chalk.green(`✓ Generated component: ${component.name}`));
+                console.log(chalk.green(`✓ Processed component: ${component.name}`));
                 spinner.start();
             }
         }
     }
-    spinner.succeed('All components generated');
+    spinner.succeed('All components processed');
 
-    spinner.start('Generating frame layouts...');
+    spinner.start('Processing frame layouts...');
     const pseudoFrames = new Map();
 
     // Generate frames using the components
@@ -381,17 +437,17 @@ export async function generateAllPseudoCode(components, instances, frames, token
         console.log(chalk.blue(`\nProcessing canvas: ${canvas.name}`));
         spinner.start();
         for (const frame of canvas.children?.filter(child => child.type === 'FRAME') || []) {
-            spinner.text = `Generating frame: ${frame.name}`;
+            spinner.text = `Processing frame: ${frame.name}`;
             const pseudoFrame = await generatePseudoFrame(frame, components, tokens, canvas);
             if (pseudoFrame) {
                 pseudoFrames.set(frame.id, pseudoFrame);
                 spinner.stop();
-                console.log(chalk.green(`  ✓ Generated frame: ${frame.name}`));
+                console.log(chalk.green(`  ✓ Processed frame: ${frame.name}`));
                 spinner.start();
             }
         }
     }
-    spinner.succeed('All frames generated');
+    spinner.succeed('All frames processed');
 
     return { components: pseudoComponents, frames: pseudoFrames };
 } 

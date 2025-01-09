@@ -25,7 +25,7 @@ https://github.com/user-attachments/assets/c80b7eee-7027-4872-ae30-5279289ff6f7
 Run directly with npx:
 
 ```bash
-npx fig4ai <figma-url>
+npx fig4ai <figma-url> [--model=claude|gpt4] [--no-ai]
 ```
 
 ## IDE Integration
@@ -64,7 +64,6 @@ fig4ai follows a sophisticated process to transform your Figma designs into AI-r
 1. **Data Extraction**
    - Connects to Figma API and retrieves comprehensive file data
    - Processes complex nested JSON structure containing all design information
-   - Handles authentication and API rate limiting
 
 2. **Design Token Parsing**
    - Parses the JSON structure hierarchically: Canvas > Frame > Component / Instance
@@ -97,13 +96,48 @@ In essence, fig4ai transforms your Figma file into a structured AI context, maki
 ### Command Line
 
 ```bash
-npx fig4ai <figma-url>
+npx fig4ai <figma-url> [--model=claude|gpt4] [--no-ai]
 ```
 
 Or if you've set `FIGMA_DESIGN_URL` in your `.env` file:
 
 ```bash
-npx fig4ai
+npx fig4ai [--model=claude|gpt4] [--no-ai]
+```
+
+### AI Options
+
+The tool supports two AI models for enhanced design analysis:
+
+1. **Claude (Default)**
+   - Uses Anthropic's Claude 3 Sonnet model
+   - Set `CLAUDE_API_KEY` in your environment variables
+   - Generally better at understanding design context
+   - More detailed component analysis
+
+2. **GPT-4o**
+   - Uses OpenAI's GPT-4 model
+   - Set `OPENAI_API_KEY` in your environment variables
+   - Alternative option if you prefer OpenAI
+
+You can also run without AI enhancement:
+```bash
+npx fig4ai <figma-url> --no-ai
+```
+This will output raw design data in a structured format without AI processing.
+
+### Environment Setup
+
+```env
+# Required
+FIGMA_ACCESS_TOKEN=your_figma_token
+
+# Optional - At least one needed for AI features
+CLAUDE_API_KEY=your_claude_api_key
+OPENAI_API_KEY=your_openai_api_key
+
+# Optional
+FIGMA_DESIGN_URL=your_default_figma_url
 ```
 
 ### Output
