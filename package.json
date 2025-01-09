@@ -1,6 +1,6 @@
 {
   "name": "fig4ai",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "A CLI tool to parse Figma URLs and generate AI-powered design rules for your AI editor.",
   "main": "src/index.js",
   "bin": {
