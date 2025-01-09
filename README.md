@@ -4,6 +4,14 @@
 
 A CLI tool that uses AI to generate design rules and documentation from your Figma files. It analyzes your Figma designs and automatically extracts design tokens, components, and layout information into a structured format.
 
+## Overview
+
+
+
+https://github.com/user-attachments/assets/c80b7eee-7027-4872-ae30-5279289ff6f7
+
+
+
 ## Features
 
 - 🎨 Extract design tokens (colors, typography, spacing, effects)
