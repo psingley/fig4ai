@@ -3,9 +3,20 @@ import ora from 'ora';
 import chalk from 'chalk';
 import { rgbToHex } from '../utils/color.js';
 import { ClaudeClient } from '../utils/claude-api.js';
+import { processDesignTokens, formatTokenCount } from '../processors/token-processor.js';
 
 let client;
 let hasAICapability = false;
+
+// Add Claude client as fallback for large frames
+let claudeClient;
+try {
+    if (process.env.CLAUDE_API_KEY) {
+        claudeClient = new ClaudeClient(process.env.CLAUDE_API_KEY);
+    }
+} catch (error) {
+    console.warn(chalk.yellow('Failed to initialize Claude fallback:', error.message));
+}
 
 export function initializeAI(model = 'claude') {
     // Check if --no-ai flag is present
@@ -27,6 +38,260 @@ export function initializeAI(model = 'claude') {
     } catch (error) {
         console.warn(chalk.yellow('Failed to initialize AI client:', error.message));
         hasAICapability = false;
+    }
+}
+
+// Enhanced rate limiting helpers
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const exponentialBackoff = (attempt, baseDelay = 2000) => Math.min(baseDelay * Math.pow(2, attempt), 120000);
+
+class AIWrapper {
+    static async callAI(client, messages, functions, options = { 
+        chunkSize: 2000,
+        baseDelay: 2000,
+        maxRetries: 5,
+        chunkDelay: 5000,
+        maxGPT4Tokens: 6000  // Conservative limit for GPT-4
+    }) {
+        let attempt = 0;
+        
+        while (attempt < options.maxRetries) {
+            try {
+                // Estimate tokens in the message
+                const estimatedTokens = messages[0].content.length / 4; // Rough estimation
+
+                // For large frames, automatically use Claude if available
+                if (client instanceof OpenAI && 
+                    estimatedTokens > options.maxGPT4Tokens && 
+                    claudeClient && 
+                    messages[0].content.includes('Complete Frame Data:')) {
+                    
+                    console.log(chalk.blue(`Frame too large for GPT-4 (${Math.round(estimatedTokens)} estimated tokens), falling back to Claude...`));
+                    return claudeClient.chat(messages, functions);
+                }
+
+                // Optimize the messages content
+                const optimizedMessages = messages.map(msg => {
+                    if (msg.content.length > options.chunkSize) {
+                        // If it contains design system data, optimize it
+                        if (msg.content.includes('Design System Details:')) {
+                            const match = msg.content.match(/\`\`\`\n([\s\S]*?)\n\`\`\`/);
+                            if (match) {
+                                try {
+                                    const designSystem = JSON.parse(match[1]);
+                                    // Only keep the most relevant tokens
+                                    const optimizedSystem = {
+                                        typography: {
+                                            headings: designSystem.typography.headings,
+                                            body: designSystem.typography.body
+                                        },
+                                        colors: {
+                                            primary: designSystem.colors.primary.slice(0, 5),
+                                            secondary: designSystem.colors.secondary.slice(0, 5),
+                                            text: designSystem.colors.text.slice(0, 3)
+                                        },
+                                        spacing: designSystem.spacing.slice(0, 5)
+                                    };
+                                    return {
+                                        ...msg,
+                                        content: msg.content.replace(match[0], '```\n' + JSON.stringify(optimizedSystem, null, 2) + '\n```')
+                                    };
+                                } catch (e) {
+                                    console.warn('Failed to optimize design system data:', e);
+                                    return msg;
+                                }
+                            }
+                        }
+                        
+                        // If it contains frame data, optimize it
+                        if (msg.content.includes('Complete Frame Data:')) {
+                            const match = msg.content.match(/Complete Frame Data:\n\`\`\`\n([\s\S]*?)\n\`\`\`/);
+                            if (match) {
+                                try {
+                                    const frameData = JSON.parse(match[1]);
+                                    // Only keep essential frame properties
+                                    const optimizedFrame = {
+                                        id: frameData.id,
+                                        name: frameData.name,
+                                        type: frameData.type,
+                                        layoutMode: frameData.layoutMode,
+                                        itemSpacing: frameData.itemSpacing,
+                                        paddingTop: frameData.paddingTop,
+                                        paddingRight: frameData.paddingRight,
+                                        paddingBottom: frameData.paddingBottom,
+                                        paddingLeft: frameData.paddingLeft,
+                                        backgroundColor: frameData.backgroundColor,
+                                        absoluteBoundingBox: frameData.absoluteBoundingBox,
+                                        constraints: frameData.constraints,
+                                        children: frameData.children?.map(child => ({
+                                            id: child.id,
+                                            name: child.name,
+                                            type: child.type,
+                                            layoutMode: child.layoutMode,
+                                            characters: child.characters
+                                        }))
+                                    };
+                                    return {
+                                        ...msg,
+                                        content: msg.content.replace(match[0], 'Complete Frame Data:\n```\n' + JSON.stringify(optimizedFrame, null, 2) + '\n```')
+                                    };
+                                } catch (e) {
+                                    console.warn('Failed to optimize frame data:', e);
+                                    return msg;
+                                }
+                            }
+                        }
+                    }
+                    return msg;
+                });
+
+                if (client instanceof OpenAI) {
+                    // Add rate limiting for GPT-4
+                    const delay = exponentialBackoff(attempt, options.baseDelay);
+                    await sleep(delay);
+
+                    // Split large frames into smaller chunks
+                    if (messages[0].content.includes('Complete Frame Data:')) {
+                        const frameMatch = messages[0].content.match(/Complete Frame Data:\n\`\`\`\n([\s\S]*?)\n\`\`\`/);
+                        if (frameMatch && frameMatch[1].length > options.chunkSize) {
+                            const frameData = JSON.parse(frameMatch[1]);
+                            const chunks = [];
+                            
+                            // Process frame metadata first
+                            chunks.push({
+                                id: frameData.id,
+                                name: frameData.name,
+                                type: frameData.type,
+                                layoutMode: frameData.layoutMode,
+                                size: {
+                                    width: frameData.absoluteBoundingBox?.width,
+                                    height: frameData.absoluteBoundingBox?.height
+                                }
+                            });
+
+                            // Process children in smaller chunks with longer delays
+                            if (frameData.children) {
+                                const chunkSize = 2; // Even smaller chunks
+                                for (let i = 0; i < frameData.children.length; i += chunkSize) {
+                                    const childrenChunk = frameData.children.slice(i, i + chunkSize);
+                                    const processedChunk = childrenChunk.map(child => ({
+                                        id: child.id,
+                                        name: child.name,
+                                        type: child.type,
+                                        characters: child.characters,
+                                        layoutMode: child.layoutMode
+                                    }));
+                                    chunks.push({
+                                        ...chunks[0],
+                                        children: processedChunk,
+                                        childrenRange: `${i + 1}-${Math.min(i + chunkSize, frameData.children.length)} of ${frameData.children.length}`
+                                    });
+                                }
+                            }
+
+                            // Process each chunk with exponential backoff and minimum chunk delay
+                            const results = [];
+                            let currentIndex = 0;
+                            while (currentIndex < chunks.length) {
+                                // Add longer delay between chunks
+                                if (currentIndex > 0) {
+                                    const chunkDelay = Math.max(options.chunkDelay, exponentialBackoff(attempt, options.baseDelay));
+                                    console.log(chalk.blue(`Waiting ${chunkDelay}ms between chunks...`));
+                                    await sleep(chunkDelay);
+                                }
+
+                                const chunk = chunks[currentIndex];
+                                const chunkMessage = {
+                                    ...messages[0],
+                                    content: messages[0].content.replace(
+                                        frameMatch[0],
+                                        'Complete Frame Data:\n```\n' + JSON.stringify(chunk, null, 2) + '\n```'
+                                    )
+                                };
+
+                                try {
+                                    const response = await client.chat.completions.create({
+                                        model: "gpt-4",
+                                        messages: [chunkMessage],
+                                        functions: functions ? functions.map(fn => ({
+                                            name: fn.name,
+                                            description: fn.description,
+                                            parameters: {
+                                                type: "object",
+                                                properties: fn.input_schema.properties,
+                                                required: fn.input_schema.required
+                                            }
+                                        })) : undefined,
+                                        function_call: functions ? { name: functions[0].name } : undefined,
+                                        max_tokens: 1000
+                                    });
+                                    results.push(response);
+                                    console.log(chalk.green(`Successfully processed chunk ${currentIndex + 1}/${chunks.length}`));
+                                    currentIndex++; // Only increment on success
+                                } catch (error) {
+                                    if (error.status === 429) {
+                                        console.warn(chalk.yellow(`Rate limit hit on chunk ${currentIndex + 1}, retrying with longer delay...`));
+                                        attempt++;
+                                        await sleep(exponentialBackoff(attempt, options.baseDelay * 2));
+                                        continue; // Retry the same chunk
+                                    }
+                                    throw error;
+                                }
+                            }
+
+                            // Combine results
+                            const combinedPseudoCode = results.map(r => {
+                                const args = JSON.parse(r.choices[0].message.function_call.arguments);
+                                return args.pseudoCode;
+                            }).join('\n');
+
+                            return {
+                                choices: [{
+                                    message: {
+                                        function_call: {
+                                            name: functions[0].name,
+                                            arguments: JSON.stringify({
+                                                frameName: frameData.name,
+                                                pseudoCode: combinedPseudoCode
+                                            })
+                                        }
+                                    }
+                                }]
+                            };
+                        }
+                    }
+
+                    // Default case for non-chunked requests
+                    return await client.chat.completions.create({
+                        model: "gpt-4",
+                        messages: optimizedMessages,
+                        functions: functions ? functions.map(fn => ({
+                            name: fn.name,
+                            description: fn.description,
+                            parameters: {
+                                type: "object",
+                                properties: fn.input_schema.properties,
+                                required: fn.input_schema.required
+                            }
+                        })) : undefined,
+                        function_call: functions ? { name: functions[0].name } : undefined,
+                        max_tokens: 1000
+                    });
+                } else {
+                    // Use existing Claude format
+                    return client.chat(optimizedMessages, functions);
+                }
+            } catch (error) {
+                if (error.status === 429 && attempt < options.maxRetries - 1) {
+                    attempt++;
+                    const delay = exponentialBackoff(attempt, options.baseDelay);
+                    console.warn(chalk.yellow(`Rate limit hit, retrying in ${delay}ms...`));
+                    await sleep(delay);
+                    continue;
+                }
+                throw error;
+            }
+        }
     }
 }
 
@@ -200,8 +465,8 @@ async function generatePseudoComponent(component, instance, tokens, figmaData) {
     const functions = [
         {
             name: "create_pseudo_component",
-            description: "Generate a pseudo-XML component based on Figma component details",
-            parameters: {
+            description: "Generate a pseudo-XML component based on Figma component details. The component should include all styling information, using style references when available and direct values when not. The output should be valid XML-like syntax with proper nesting and attribute formatting. Consider accessibility, maintainability, and design system consistency in the output.",
+            input_schema: {
                 type: "object",
                 properties: {
                     componentName: {
@@ -210,7 +475,7 @@ async function generatePseudoComponent(component, instance, tokens, figmaData) {
                     },
                     pseudoCode: {
                         type: "string",
-                        description: "The pseudo-XML code for the component with detailed styling"
+                        description: "The pseudo-XML code for the component with detailed styling, including accessibility attributes, style references, and comprehensive documentation"
                     }
                 },
                 required: ["componentName", "pseudoCode"]
@@ -236,23 +501,26 @@ ${JSON.stringify(componentStyles, null, 2)}
 \`\`\`
 
 Requirements:
-1. Generate pseudo-XML code that represents this component
+1. Generate semantic, accessible pseudo-XML code that represents this component
 2. Use style references (styleId) when available instead of direct values
-3. Include ALL styling details (colors, shadows, effects)
-4. Use exact color values (HEX and RGB) when no style reference exists
-5. Include shadow and effect details with style references
-6. Specify padding and spacing
-7. Include background colors and gradients
-8. Make it accessible
-9. Keep it readable
+3. Include ALL styling details (colors, shadows, effects) with exact values
+4. Include ARIA attributes and roles for accessibility
+5. Document style decisions and token usage in comments
+6. Specify exact padding, margins, and spacing values
+7. Include responsive behavior hints
+8. Add semantic class names and data attributes
+9. Include state handling (hover, focus, active)
+10. Document any accessibility considerations
 
 Example format:
 <Button 
-  fills="style_id_123"
-  effects="style_id_456"
-  strokes="style_id_789"
-  padding="8px 16px"
-  border-radius="4px"
+  styleId="style_123"
+  role="button"
+  aria-label="Primary action button"
+  data-component="primary-button"
+  className="primary-action-btn"
+  states="hover:opacity-80 focus:ring-2"
+  // ... rest of the attributes ...
 >
   <Icon name="star" fills="style_id_234" />
   <Text fills="style_id_567" font-size="16px">Click me</Text>
@@ -261,10 +529,10 @@ Example format:
 Generate ONLY the pseudo-XML code with detailed styling attributes, preferring style references over direct values.`;
 
     try {
-        const completion = await client.chat(
+        const completion = await AIWrapper.callAI(
+            client,
             [{ role: "user", content: prompt }],
-            functions,
-            { name: "create_pseudo_component" }
+            functions
         );
 
         const response = JSON.parse(completion.choices[0].message.function_call.arguments);
@@ -286,11 +554,15 @@ async function generatePseudoFrame(frame, components, tokens, canvas) {
         };
     }
 
+    // Always use Claude for frames if available
+    const frameClient = claudeClient || client;
+    console.log(chalk.blue(`Using ${claudeClient ? 'Claude' : 'GPT-4'} for frame processing...`));
+
     const functions = [
         {
             name: "create_pseudo_frame",
-            description: "Generate a pseudo-XML frame layout based on Figma frame details",
-            parameters: {
+            description: "Generate a pseudo-XML frame layout based on Figma frame details. The frame should include all layout information, styling, and nested elements. The output must be valid XML-like syntax that accurately represents the Figma frame structure, including positioning, constraints, and styling.",
+            input_schema: {
                 type: "object",
                 properties: {
                     frameName: {
@@ -299,7 +571,7 @@ async function generatePseudoFrame(frame, components, tokens, canvas) {
                     },
                     pseudoCode: {
                         type: "string",
-                        description: "The pseudo-XML code for the frame layout"
+                        description: "The pseudo-XML code for the frame layout with all styling and structure details"
                     }
                 },
                 required: ["frameName", "pseudoCode"]
@@ -385,10 +657,10 @@ Example format:
 Generate ONLY the pseudo-XML code without any additional explanation. Ensure all text content and styling from the frame data is accurately represented.`;
 
     try {
-        const completion = await client.chat(
+        const completion = await AIWrapper.callAI(
+            frameClient,
             [{ role: "user", content: prompt }],
-            functions,
-            { name: "create_pseudo_frame" }
+            functions
         );
 
         const response = JSON.parse(completion.choices[0].message.function_call.arguments);
@@ -450,4 +722,4 @@ export async function generateAllPseudoCode(components, instances, frames, token
     spinner.succeed('All frames processed');
 
     return { components: pseudoComponents, frames: pseudoFrames };
-} 
+}

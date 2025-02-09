@@ -9,62 +9,82 @@ export class ClaudeClient {
 
     async chat(messages, functions, functionCall) {
         try {
-            const systemPrompt = functions ? 
-                `You are a function calling AI. Available functions: ${JSON.stringify(functions)}. 
-                When responding, you must call one of these functions using the exact format:
-                {"name": "function_name", "arguments": {arg1: value1, arg2: value2}}` : undefined;
+            console.log('DEBUG: Calling Claude API with functions:', functions ? functions.length : 'none');
+            
+            // Convert functions to Claude tools format - using exact format from docs
+            const tools = functions ? functions.map(fn => ({
+                name: fn.name,
+                description: fn.description,
+                input_schema: fn.input_schema
+            })) : undefined;
+
+            console.log('DEBUG: Converted to tools format:', tools);
 
             const response = await this.client.messages.create({
-                model: 'claude-3-sonnet-20240229',
+                model: 'claude-3-5-sonnet-20241022',
                 max_tokens: 4096,
                 temperature: 0.7,
-                system: systemPrompt,
                 messages: messages.map(msg => ({
                     role: msg.role === 'user' ? 'user' : 'assistant',
                     content: msg.content
-                }))
+                })),
+                ...(tools && { tools }),
+                tool_choice: tools ? { type: 'auto' } : undefined
             });
 
+            console.log('DEBUG: Claude API response:', response.content);
+
             if (functions) {
-                // Parse function call from the response content
-                try {
-                    const text = response.content[0].text;
-                    // Find the first JSON object in the response
-                    const match = text.match(/\{(?:[^{}]|{[^{}]*})*\}/);
-                    if (match) {
-                        const parsedCall = JSON.parse(match[0]);
-                        if (parsedCall.name && parsedCall.arguments) {
-                            return {
-                                choices: [{
-                                    message: {
-                                        function_call: {
-                                            name: parsedCall.name,
-                                            arguments: JSON.stringify(parsedCall.arguments)
-                                        }
-                                    }
-                                }]
-                            };
-                        }
-                    }
-                    // If no valid function call found, throw an error
-                    throw new Error('No valid function call found in response');
-                } catch (error) {
-                    console.error('Error parsing function call from Claude response:', error);
-                    throw new Error('Failed to parse function call from response');
+                // Look for tool_use blocks in the response
+                const toolUse = response.content.find(block => block.type === 'tool_use');
+                if (toolUse) {
+                    // Return in OpenAI function call format for compatibility
+                    return {
+                        choices: [{
+                            message: {
+                                function_call: {
+                                    name: toolUse.name,
+                                    arguments: JSON.stringify(toolUse.input)
+                                }
+                            }
+                        }]
+                    };
                 }
+                // If no tool_use block but tools were provided, throw error
+                throw new Error('No tool_use block found in response');
             }
 
+            // For regular responses, return the text content
+            const textBlock = response.content.find(block => block.type === 'text');
+            if (!textBlock) {
+                throw new Error('No text block found in response');
+            }
             return {
                 choices: [{
                     message: {
-                        content: response.content[0].text
+                        content: textBlock.text
                     }
                 }]
             };
         } catch (error) {
-            if (error.message === 'Failed to parse function call from response') {
-                throw error;
+            // Handle specific API errors
+            if (error.status === 429) {
+                throw new Error('Rate limit exceeded. Please try again in a few seconds.');
+            } else if (error.status === 413) {
+                throw new Error('Input too long. Try reducing the content length.');
+            } else if (error.status === 400 && error.message.includes('token')) {
+                throw new Error('Token limit exceeded. Try reducing the input size or splitting the request.');
+            } else if (error.status === 401) {
+                throw new Error('Invalid API key or authentication error.');
             }
+            
+            // Log detailed error for debugging
+            console.error('Claude API detailed error:', {
+                status: error.status,
+                message: error.message,
+                type: error.type
+            });
+
             throw new Error(`Claude API error: ${error.message}`);
         }
     }

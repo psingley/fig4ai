@@ -1,0 +1,124 @@
+# Figma Design Rules
+
+## File Information
+Type: design
+File ID: gRtxfD2lfA6KeyzwFPKA1D
+Title: Related-Posts-Card
+Node ID: Not specified
+
+File Name: Related Posts Card
+Last Modified: 2/9/2025, 4:55:05 PM
+
+## Design Tokens Summary
+typography: 2, colors: 1, effects: 0, spacing: 3, components: 0, styles: 2
+
+## Typography
+
+## Colors
+
+### OTHER
+- Document/Related Posts Card/Related Posts Card/Related Posts Card Image
+  - HEX: #d9d9d9
+  - RGB: 217, 217, 217
+
+## Canvases and Frames
+
+### Related Posts Card
+- ID: 0:1
+- Type: CANVAS
+- Total Elements: 1
+
+#### Frames (1)
+
+##### Related Posts Card
+- ID: 1:4
+- Size: 297x332
+- Layout: VERTICAL
+- Item Spacing: undefined
+
+## Component Instances
+
+## Component Structure
+
+```yaml
+components:
+```
+
+## Pseudo Components
+
+```xml
+```
+
+## Frame Layouts
+
+```xml
+<Frame 
+  name="Related Posts Card" 
+  layout="VERTICAL" 
+  spacing="0" 
+  position="x=0,y=0"
+  size="w=297,h=332"
+  constraints="{'vertical':'TOP','horizontal':'LEFT'}"
+  background="{'r':0,'g':0,'b':0,'a':0}"
+  blendMode="PASS_THROUGH"
+  clipsContent="false"
+  layoutSizing="{'horizontal':'FIXED','vertical':'HUG'}"
+  effects="[{'type':'DROP_SHADOW','visible':true,'color':{'r':0,'g':0,'b':0,'a':0.1},'offset':{'x':0,'y':3},'radius':6}]"
+>
+  <Rectangle
+    name="Related Posts Card Image"
+    size="w=297,h=192"
+    cornerRadius="10,10,0,0"
+    layoutAlign="STRETCH"
+    layoutSizing="{'horizontal':'FILL','vertical':'FIXED'}"
+    background="{'r':0.85,'g':0.85,'b':0.85,'a':1}"
+    imageRef="9e4603211df8949bf387f2566d5074092f87b20c"
+  />
+  
+  <Frame
+    name="Related Posts Card Text"
+    layout="VERTICAL"
+    spacing="8"
+    padding="20,20,20,20"
+    size="w=297,h=140"
+    background="{'r':1,'g':1,'b':1,'a':1}"
+    cornerRadius="0,0,10,10"
+    layoutAlign="STRETCH"
+    layoutSizing="{'horizontal':'FILL','vertical':'FIXED'}"
+    primaryAxisAlign="SPACE_BETWEEN"
+  >
+    <Frame
+      name="Related Posts Card Text Body"
+      layout="VERTICAL"
+      spacing="8"
+      size="w=257,h=85"
+      layoutAlign="STRETCH"
+      layoutGrow="1"
+      layoutSizing="{'horizontal':'FILL','vertical':'FILL'}"
+    >
+      <Text
+        content="An Alpine Adventure with Collette"
+        fontFamily="Montserrat"
+        fontStyle="SemiBold"
+        fontSize="14"
+        fontWeight="600"
+        lineHeight="17.066"
+        color="{'r':0,'g':0,'b':0,'a':1}"
+        layoutSizing="{'horizontal':'FILL','vertical':'HUG'}"
+      />
+    </Frame>
+    
+    <Text
+      content="Jan 02, 2025"
+      fontFamily="Montserrat"
+      fontStyle="SemiBold"
+      fontSize="12"
+      fontWeight="600"
+      lineHeight="14.628"
+      color="{'r':0.4,'g':0.4,'b':0.4,'a':1}"
+      layoutSizing="{'horizontal':'FILL','vertical':'HUG'}"
+    />
+  </Frame>
+</Frame>
+
+```

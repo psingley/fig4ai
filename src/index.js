@@ -53,16 +53,19 @@ if (missingEnvVars.length > 0) {
 const args = process.argv.slice(2);
 const figmaUrl = args[0] || process.env.FIGMA_DESIGN_URL;
 const modelArg = args.find(arg => arg.startsWith('--model='));
+const outputArg = args.find(arg => arg.startsWith('--output='));
 const noAI = args.includes('--no-ai');
 const model = modelArg ? modelArg.split('=')[1].toLowerCase() : 'claude';
+const outputPath = outputArg ? outputArg.split('=')[1] : '.designrules';
 
 if (!figmaUrl) {
     console.error(chalk.red('Please provide a Figma URL'));
     console.log(chalk.blue('\nUsage:'));
-    console.log('  npx fig4ai <figma-url> [--model=claude|gpt4] [--no-ai]');
+    console.log('  npx fig4ai <figma-url> [--model=claude|gpt4] [--no-ai] [--output=path]');
     console.log(chalk.blue('\nOptions:'));
     console.log('  --model=claude|gpt4    Choose AI model (default: claude)');
     console.log('  --no-ai                Skip AI enhancements and output raw data');
+    console.log('  --output=path          Specify output file path (default: .designrules)');
     console.log(chalk.blue('\nOr set it in your .env file:'));
     console.log(chalk.gray('FIGMA_DESIGN_URL=your_figma_url_here'));
     process.exit(1);
@@ -223,10 +226,10 @@ async function main() {
         });
         output += '```\n';
 
-        // Save to .designrules file
-        spinner.start('Saving design rules...');
-        await fs.promises.writeFile('.designrules', output);
-        spinner.succeed('Design rules saved successfully');
+        // Save to specified output file
+        spinner.start(`Saving design rules to ${outputPath}...`);
+        await fs.promises.writeFile(outputPath, output);
+        spinner.succeed(`Design rules saved successfully to ${outputPath}`);
 
     } catch (error) {
         spinner.fail(chalk.red('Error: ' + error.message));
