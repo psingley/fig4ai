@@ -84,17 +84,16 @@ if (model !== 'claude' && model !== 'gpt4') {
 }
 
 // Check if AI enhancement is possible and desired
-const hasAICapability = !noAI && (
-    (model === 'claude' && process.env.CLAUDE_API_KEY) || 
-    (model === 'gpt4' && process.env.OPENAI_API_KEY)
-);
+const hasAICapability = !noAI && ((model === 'claude' && process.env.CLAUDE_API_KEY) || 
+                                 (model === 'gpt4' && process.env.OPENAI_API_KEY));
 
 if (noAI) {
     console.info(chalk.blue('\nAI enhancement disabled via --no-ai flag.'));
 } else if (!hasAICapability) {
-    const missingKey = model === 'gpt4' ? 'OPENAI_API_KEY' : 'CLAUDE_API_KEY';
-    console.warn(chalk.yellow(`\nNo API key found for ${model}. Running without AI enhancement.`));
-    console.warn(chalk.gray(`To enable AI features with ${model}, set ${missingKey} in your .env file.`));
+    console.warn(chalk.yellow('\nNo AI API keys found. Running without AI enhancement.'));
+    console.warn(chalk.gray('To enable AI features, set CLAUDE_API_KEY or OPENAI_API_KEY in your .env file.'));
+} else {
+    console.info(chalk.blue(`\nUsing ${chalk.bold(model.toUpperCase())} for AI enhancement 🤖`));
 }
 
 async function main() {
@@ -119,6 +118,7 @@ async function main() {
 
         spinner.start('Fetching file data from Figma API...');
         const figmaData = await getFigmaFileData(result.fileId);
+        figmaData.fileId = result.fileId;
         spinner.succeed('Figma file data fetched');
         
         output += `File Name: ${figmaData.name}\n`;

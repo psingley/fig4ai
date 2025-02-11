@@ -3,6 +3,7 @@ import ora from 'ora';
 import chalk from 'chalk';
 import { rgbToHex } from '../utils/color.js';
 import { ClaudeClient } from '../utils/claude-api.js';
+import { getFigmaImage } from '../utils/api.js';
 
 let client;
 let hasAICapability = false;
@@ -416,13 +417,54 @@ function determineElementType(node) {
     return node.type;
 }
 
-async function generatePseudoFrame(frame, components, tokens, canvas) {
+async function generatePseudoFrame(frame, components, tokens, canvas, figmaData) {
     if (!hasAICapability || !client) {
         return {
             frameName: frame.name,
             pseudoCode: `# ${frame.name} (Canvas: ${canvas.name})\n${JSON.stringify(frame, null, 2)}`
         };
     }
+
+    // Process any images in the frame
+    const imageRefs = new Map();
+    if (frame.children) {
+        for (const child of frame.children) {
+            if (determineElementType(child) === 'Image') {
+                // Look for image fills
+                const imageFill = child.fills?.find(fill => 
+                    fill.type === 'IMAGE' && 
+                    (fill.imageRef || fill.imageHash)
+                );
+                
+                if (imageFill) {
+                    try {
+                        console.log('Processing image node:', {
+                            id: child.id,
+                            name: child.name
+                        });
+                        
+                        if (!figmaData.fileId) {
+                            throw new Error('No file ID provided in Figma data');
+                        }
+                        
+                        console.log('Using File ID:', figmaData.fileId);
+                        const imageData = await getFigmaImage(figmaData.fileId, child.id);
+                        imageRefs.set(child.id, imageData.url);
+                        console.log(chalk.green(`✓ Fetched image URL for node ${child.id}`));
+                    } catch (error) {
+                        console.warn(chalk.yellow(`Warning: Failed to fetch image URL for node ${child.id}: ${error.message}`));
+                    }
+                }
+            }
+        }
+    }
+
+    // Add image URLs to the prompt context
+    const imageContext = imageRefs.size > 0 ? `\nImage References:\n${
+        Array.from(imageRefs.entries())
+            .map(([ref, url]) => `${ref}: ${url}`)
+            .join('\n')
+    }\n` : '';
 
     const functions = [
         {
@@ -544,6 +586,27 @@ async function generatePseudoFrame(frame, components, tokens, canvas) {
                                         value: { type: "object" }
                                     }
                                 }
+                            },
+                            image: {
+                                type: "object",
+                                description: "Image-specific styling and references",
+                                properties: {
+                                    imageRef: { type: "string" },
+                                    src: { type: "string" },
+                                    sizing: {
+                                        type: "object",
+                                        properties: {
+                                            horizontal: { 
+                                                type: "string",
+                                                enum: ["fill", "fit", "stretch"]
+                                            },
+                                            vertical: {
+                                                type: "string",
+                                                enum: ["fill", "fit", "stretch"]
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -580,6 +643,11 @@ Spacing: ${frame.itemSpacing || 0}
 Padding: ${JSON.stringify(framePadding)}
 Elements: ${frame.children?.length || 0}
 
+Image URLs:
+${Array.from(imageRefs.entries()).map(([nodeId, url]) => 
+    `${nodeId}: ${url} // Sample reference image: ${frame.children.find(c => c.id === nodeId)?.name || 'Unnamed image'}`
+).join('\n')}
+
 Canvas Summary:
 Name: ${canvas.name}
 Type: ${canvas.type}
@@ -605,10 +673,11 @@ Requirements:
 4. Include border radius and effects when present
 5. Only use position information for free layout or absolute positioning
 6. Convert Rectangle to Image only when image evidence exists
-7. Preserve all text content exactly as specified
-8. Keep styling information semantic and complete
-9. Maintain proper nesting and hierarchy
-10. Focus on maintainability and readability
+7. For Image elements, include both imageRef and src attributes
+8. Preserve all text content exactly as specified
+9. Keep styling information semantic and complete
+10. Maintain proper nesting and hierarchy
+11. Focus on maintainability and readability
 
 Example format:
 <Container 
@@ -617,11 +686,13 @@ Example format:
     direction="vertical" 
     spacing="16"
 >
+    {/* Sample reference image: Card Thumbnail */}
     <Image 
         name="Thumbnail"
         fill="stretch"
         cornerRadius="8,8,0,0"
         imageRef="abc123"
+        src="https://figma-image-url.com/abc123"
     />
     <Text
         content="Heading"
@@ -640,7 +711,7 @@ Example format:
     />
 </Container>
 
-Generate ONLY the pseudo-XML code without any additional explanation. Ensure all text content and styling from the frame data is accurately represented.`;
+Generate ONLY the pseudo-XML code without any additional explanation. Ensure all text content and styling from the frame data is accurately represented. For each Image element, include a comment above it indicating it is a sample reference image with its name.`;
 
     try {
         const formattedFunctions = currentModel === 'gpt4' ? toOpenAIFormat(functions) : toClaudeFormat(functions);
@@ -710,7 +781,7 @@ export async function generateAllPseudoCode(components, instances, frames, token
         spinner.start();
         for (const frame of canvas.children?.filter(child => child.type === 'FRAME') || []) {
             spinner.text = `Processing frame: ${frame.name}`;
-            const pseudoFrame = await generatePseudoFrame(frame, components, tokens, canvas);
+            const pseudoFrame = await generatePseudoFrame(frame, components, tokens, canvas, figmaData);
             if (pseudoFrame) {
                 pseudoFrames.set(frame.id, pseudoFrame);
                 spinner.stop();
