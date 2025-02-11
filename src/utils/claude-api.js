@@ -9,16 +9,12 @@ export class ClaudeClient {
 
     async chat(messages, functions, functionCall) {
         try {
-            console.log('DEBUG: Calling Claude API with functions:', functions ? functions.length : 'none');
-            
             // Convert functions to Claude tools format - using exact format from docs
             const tools = functions ? functions.map(fn => ({
                 name: fn.name,
                 description: fn.description,
                 input_schema: fn.input_schema
             })) : undefined;
-
-            console.log('DEBUG: Converted to tools format:', tools);
 
             const response = await this.client.messages.create({
                 model: 'claude-3-5-sonnet-20241022',
@@ -31,8 +27,6 @@ export class ClaudeClient {
                 ...(tools && { tools }),
                 tool_choice: tools ? { type: 'auto' } : undefined
             });
-
-            console.log('DEBUG: Claude API response:', response.content);
 
             if (functions) {
                 // Look for tool_use blocks in the response
@@ -59,6 +53,7 @@ export class ClaudeClient {
             if (!textBlock) {
                 throw new Error('No text block found in response');
             }
+
             return {
                 choices: [{
                     message: {
@@ -66,6 +61,7 @@ export class ClaudeClient {
                     }
                 }]
             };
+
         } catch (error) {
             // Handle specific API errors
             if (error.status === 429) {

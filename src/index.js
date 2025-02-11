@@ -52,34 +52,49 @@ if (missingEnvVars.length > 0) {
 // Parse command line arguments
 const args = process.argv.slice(2);
 const figmaUrl = args[0] || process.env.FIGMA_DESIGN_URL;
-const modelArg = args.find(arg => arg.startsWith('--model='));
-const outputArg = args.find(arg => arg.startsWith('--output='));
-const noAI = args.includes('--no-ai');
+const modelArg = args.find(arg => arg.startsWith('--model=') || arg.startsWith('-model='));
+const outputArg = args.find(arg => arg.startsWith('--output=') || arg.startsWith('-output='));
+const noAI = args.includes('--no-ai') || args.includes('-no-ai');
 const model = modelArg ? modelArg.split('=')[1].toLowerCase() : 'claude';
 const outputPath = outputArg ? outputArg.split('=')[1] : '.designrules';
 
+// Validate Figma URL
 if (!figmaUrl) {
-    console.error(chalk.red('Please provide a Figma URL'));
+    console.error(chalk.red('\nError: No Figma URL provided'));
     console.log(chalk.blue('\nUsage:'));
-    console.log('  npx fig4ai <figma-url> [--model=claude|gpt4] [--no-ai] [--output=path]');
+    console.log('  npx fig4ai <figma-url> [options]');
     console.log(chalk.blue('\nOptions:'));
     console.log('  --model=claude|gpt4    Choose AI model (default: claude)');
-    console.log('  --no-ai                Skip AI enhancements and output raw data');
+    console.log('  --no-ai                Skip AI enhancement and output raw data');
     console.log('  --output=path          Specify output file path (default: .designrules)');
-    console.log(chalk.blue('\nOr set it in your .env file:'));
+    console.log(chalk.blue('\nExamples:'));
+    console.log('  npx fig4ai https://figma.com/file/xyz --model=gpt4');
+    console.log('  npx fig4ai https://figma.com/file/xyz --no-ai');
+    console.log(chalk.blue('\nAlternatively, set in .env:'));
     console.log(chalk.gray('FIGMA_DESIGN_URL=your_figma_url_here'));
     process.exit(1);
 }
 
+// Validate model selection
+if (model !== 'claude' && model !== 'gpt4') {
+    console.error(chalk.red('\nInvalid model specified. Must be either "claude" or "gpt4".'));
+    console.log(chalk.blue('\nUsage:'));
+    console.log('  npx fig4ai <figma-url> [--model=claude|gpt4] [--no-ai]');
+    process.exit(1);
+}
+
 // Check if AI enhancement is possible and desired
-const hasAICapability = !noAI && ((model === 'claude' && process.env.CLAUDE_API_KEY) || 
-                                 (model === 'gpt4' && process.env.OPENAI_API_KEY));
+const hasAICapability = !noAI && (
+    (model === 'claude' && process.env.CLAUDE_API_KEY) || 
+    (model === 'gpt4' && process.env.OPENAI_API_KEY)
+);
 
 if (noAI) {
     console.info(chalk.blue('\nAI enhancement disabled via --no-ai flag.'));
 } else if (!hasAICapability) {
-    console.warn(chalk.yellow('\nNo AI API keys found. Running without AI enhancement.'));
-    console.warn(chalk.gray('To enable AI features, set CLAUDE_API_KEY or OPENAI_API_KEY in your .env file.'));
+    const missingKey = model === 'gpt4' ? 'OPENAI_API_KEY' : 'CLAUDE_API_KEY';
+    console.warn(chalk.yellow(`\nNo API key found for ${model}. Running without AI enhancement.`));
+    console.warn(chalk.gray(`To enable AI features with ${model}, set ${missingKey} in your .env file.`));
 }
 
 async function main() {
